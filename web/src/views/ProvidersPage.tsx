@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Collapse, DatePicker, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Collapse, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type DeleteResult, type Provider } from '../api'
 
@@ -112,38 +112,57 @@ export default function ProvidersPage() {
   return (
     <div className="mc-enter mx-auto max-w-[1500px]">
       <PageHeader title="供应商"><Button type="primary" icon={<PlusOutlined />} onClick={createProvider}>新增供应商</Button></PageHeader>
-      <Table rowKey="id" loading={providers.isPending} dataSource={providers.data ?? []} pagination={false} expandable={{
-        expandedRowRender: (record) => (
-          <div className="grid grid-cols-2 gap-6 p-4">
-            <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">协议端点</div>{Object.entries(record.endpoints).map(([key, value]) => <div key={key} className="mb-2 flex gap-3"><Tag>{key}</Tag><code className="break-all text-xs">{value}</code></div>)}</div>
-            <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">上游密钥池</div>{record.keys.map((key) => <div key={key.id} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-black/5 pb-2 dark:border-white/5"><span className="min-w-0">{key.name || `密钥 ${key.position + 1}`} · <code className="break-all text-xs">{key.secret || '—'}</code></span><Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{runtimeStatusName(key.runtime_status)}</Tag></div>)}</div>
-          </div>
-        ),
-      }} columns={[
-        { title: '供应商', dataIndex: 'name', render: (value) => <strong>{value}</strong> },
-        { title: '鉴权', dataIndex: 'auth_type', render: (value) => <Tag>{value}</Tag> },
-        { title: '协议', dataIndex: 'endpoints', render: (value) => <Space wrap>{Object.keys(value).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space> },
-        { title: '密钥池', dataIndex: 'keys', render: (value) => `${value.length} 把` },
-        { title: '状态', dataIndex: 'enabled', render: (value) => value ? <Tag color="success">启用</Tag> : <Tag>停用</Tag> },
-        { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
-        { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editProvider(record)} /><Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
-      ]} />
-      <Modal title={editing ? '编辑供应商' : '新增供应商'} width={760} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
+      <div className="hidden lg:block">
+        <Table rowKey="id" loading={providers.isPending} dataSource={providers.data ?? []} pagination={false} scroll={{ x: 900 }} expandable={{ expandedRowRender: (record) => <ProviderDetails record={record} /> }} columns={[
+          { title: '供应商', dataIndex: 'name', render: (value) => <strong>{value}</strong> },
+          { title: '鉴权', dataIndex: 'auth_type', render: (value) => <Tag>{value}</Tag> },
+          { title: '协议', dataIndex: 'endpoints', render: (value) => <Space wrap>{Object.keys(value).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space> },
+          { title: '密钥池', dataIndex: 'keys', render: (value) => `${value.length} 把` },
+          { title: '状态', dataIndex: 'enabled', render: (value) => value ? <Tag color="success">启用</Tag> : <Tag>停用</Tag> },
+          { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
+          { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editProvider(record)} /><Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
+        ]} />
+      </div>
+      <div className="space-y-3 lg:hidden">
+        {providers.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : providers.data?.length ? providers.data.map((provider) => (
+          <Card key={provider.id} size="small">
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0"><strong className="break-all">{provider.name}</strong><div className="mt-1 text-xs text-[#7c8d86]">{provider.auth_type} · {provider.keys.length} 把密钥</div></div>
+              <Tag className="shrink-0" color={provider.enabled ? 'success' : undefined}>{provider.enabled ? '启用' : '停用'}</Tag>
+            </div>
+            <Space wrap size={[4, 4]} className="mb-3">{Object.keys(provider.endpoints).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space>
+            <Collapse ghost size="small" items={[{ key: 'details', label: '端点与密钥池', children: <ProviderDetails record={provider} compact /> }]} />
+            <div className="mt-2 flex items-center justify-end gap-1">
+              <Switch size="small" checked={provider.enabled} onChange={(value) => toggle.mutate({ id: provider.id, enabled: value })} />
+              <Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${provider.name}`} onClick={() => editProvider(provider)} />
+              <Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(provider.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${provider.name}`} /></Popconfirm>
+            </div>
+          </Card>
+        )) : <Card><Empty className="py-8" description="暂无供应商" /></Card>}
+      </div>
+      <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑供应商' : '新增供应商'} width={760} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">
-          <div className="mb-5 flex items-center justify-between rounded border border-black/10 bg-black/[.015] px-4 py-3 dark:border-white/10 dark:bg-white/[.02]"><span className="text-sm text-[#7c8d86]">供应商模板</span><Space>{providerTemplates.map((template) => <Button key={template.name} size="small" onClick={() => applyTemplate(template)}>{template.name}</Button>)}</Space></div>
-          <div className="grid grid-cols-2 gap-4"><Form.Item name="name" label="供应商名称" rules={[{ required: true }]}><Input placeholder="例如：OpenCode Go" /></Form.Item><Form.Item name="auth_type" label="上游鉴权" rules={[{ required: true }]}><Select options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} /></Form.Item></div>
+          <div className="mb-5 flex flex-col gap-3 rounded border border-black/10 bg-black/[.015] px-4 py-3 dark:border-white/10 dark:bg-white/[.02] sm:flex-row sm:items-center sm:justify-between"><span className="text-sm text-[#7c8d86]">供应商模板</span><Space wrap>{providerTemplates.map((template) => <Button key={template.name} size="small" onClick={() => applyTemplate(template)}>{template.name}</Button>)}</Space></div>
+          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2"><Form.Item name="name" label="供应商名称" rules={[{ required: true }]}><Input placeholder="例如：OpenCode Go" /></Form.Item><Form.Item name="auth_type" label="上游鉴权" rules={[{ required: true }]}><Select options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} /></Form.Item></div>
           <Form.Item noStyle shouldUpdate={(before, after) => before.auth_type !== after.auth_type}>{({ getFieldValue }) => getFieldValue('auth_type') === 'custom' ? <Form.Item name="auth_header" label="自定义鉴权头" rules={[{ required: true }]}><Input placeholder="例如：api-key" /></Form.Item> : null}</Form.Item>
           <Collapse ghost items={[{ key: 'endpoints', label: '协议端点', children: <div className="grid gap-1"><Form.Item name="chat_completions" label="Chat Completions 完整 URL"><Input placeholder="https://…/v1/chat/completions" /></Form.Item><Form.Item name="responses" label="Responses 完整 URL"><Input placeholder="https://…/v1/responses" /></Form.Item><Form.Item name="messages" label="Messages 完整 URL"><Input placeholder="https://…/v1/messages" /></Form.Item></div> }, { key: 'advanced', label: '高级设置', children: <><Form.Item name="quota_codes" label="额度耗尽错误码（一行一个）"><Input.TextArea rows={3} placeholder="AccountQuotaExceeded" /></Form.Item><Form.Item name="static_headers" label="静态请求头（JSON 对象）"><Input.TextArea rows={3} placeholder={'{"X-Custom-Header":"value"}'} className="font-mono" /></Form.Item></> }]} />
           <div className="mb-3 mt-5 flex items-center justify-between"><span className="font-medium">上游密钥池</span></div>
-          <Form.List name="keys">{(fields, { add, remove: removeField }) => <div className="space-y-3">{fields.map((field, index) => <div key={field.key} className="grid grid-cols-[1fr_2fr_1.2fr_52px_36px] gap-3 rounded border border-black/10 p-3 dark:border-white/10"><Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item><Form.Item {...field} name={[field.name, 'name']} noStyle><Input placeholder={`备注 ${index + 1}`} /></Form.Item><Form.Item {...field} name={[field.name, 'secret']} noStyle rules={[{ validator: (_, value) => form.getFieldValue(['keys', field.name, 'id']) || value ? Promise.resolve() : Promise.reject(new Error('请输入密钥')) }]}><Input placeholder="上游密钥" suffix={<CopyOutlined className="cursor-pointer text-[#7c8d86]" onClick={() => { navigator.clipboard.writeText(form.getFieldValue(['keys', field.name, 'secret']) ?? ''); message.success('密钥已复制') }} />} /></Form.Item><Form.Item {...field} name={[field.name, 'expires_at']} noStyle><DatePicker showTime placeholder="永不过期" /></Form.Item><Form.Item {...field} name={[field.name, 'enabled']} noStyle valuePropName="checked"><Switch /></Form.Item><Button type="text" danger icon={<DeleteOutlined />} disabled={fields.length === 1} onClick={() => removeField(field.name)} /></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ enabled: true })} block>添加密钥</Button></div>}</Form.List>
+          <Form.List name="keys">{(fields, { add, remove: removeField }) => <div className="space-y-3">{fields.map(({ key, ...field }, index) => <div key={key} className="grid grid-cols-[minmax(0,1fr)_36px] gap-3 rounded border border-black/10 p-3 dark:border-white/10 sm:grid-cols-[1fr_2fr_1.2fr_52px_36px]"><Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item><Form.Item {...field} name={[field.name, 'name']} className="!mb-0 col-span-2 sm:col-span-1"><Input placeholder={`备注 ${index + 1}`} /></Form.Item><Form.Item {...field} name={[field.name, 'secret']} className="!mb-0 col-span-2 sm:col-span-1" rules={[{ validator: (_, value) => form.getFieldValue(['keys', field.name, 'id']) || value ? Promise.resolve() : Promise.reject(new Error('请输入密钥')) }]}><Input placeholder="上游密钥" suffix={<CopyOutlined className="cursor-pointer text-[#7c8d86]" onClick={() => { navigator.clipboard.writeText(form.getFieldValue(['keys', field.name, 'secret']) ?? ''); message.success('密钥已复制') }} />} /></Form.Item><Form.Item {...field} name={[field.name, 'expires_at']} className="!mb-0 col-span-2 sm:col-span-1"><DatePicker showTime placeholder="永不过期" className="w-full" /></Form.Item><div className="flex items-center justify-start sm:justify-center"><Form.Item {...field} name={[field.name, 'enabled']} noStyle valuePropName="checked"><Switch /></Form.Item></div><Button type="text" danger icon={<DeleteOutlined />} disabled={fields.length === 1} onClick={() => removeField(field.name)} /></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ enabled: true })} block>添加密钥</Button></div>}</Form.List>
         </Form>
       </Modal>
     </div>
   )
 }
 
+function ProviderDetails({ record, compact = false }: { record: Provider; compact?: boolean }) {
+  return <div className={`grid grid-cols-1 gap-5 ${compact ? '' : 'p-4 lg:grid-cols-2 lg:gap-6'}`}>
+    <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">协议端点</div>{Object.entries(record.endpoints).map(([key, value]) => <div key={key} className="mb-2 flex flex-col gap-1 sm:flex-row sm:gap-3"><Tag className="w-fit">{key}</Tag><code className="break-all text-xs">{value}</code></div>)}</div>
+    <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">上游密钥池</div>{record.keys.map((key) => <div key={key.id} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-black/5 pb-2 dark:border-white/5"><span className="min-w-0 break-all">{key.name || `密钥 ${key.position + 1}`} · <code className="text-xs">{key.secret || '—'}</code></span><Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{runtimeStatusName(key.runtime_status)}</Tag></div>)}</div>
+  </div>
+}
+
 function PageHeader({ title, children }: { title: string; children: React.ReactNode }) {
-  return <div className="mb-8 flex items-end justify-between"><Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">{title}</Typography.Title>{children}</div>
+  return <div className="mb-6 flex items-center justify-between gap-4 sm:mb-8"><Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">{title}</Typography.Title>{children}</div>
 }
 
 function runtimeStatusName(value: string): string {

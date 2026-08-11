@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Col, Collapse, Descriptions, Drawer, Empty, Input, Row, Skeleton, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Col, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Row, Skeleton, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
 
@@ -37,22 +37,22 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
 
   return (
     <div className="mc-enter mx-auto max-w-[1500px]">
-      <div className="mb-10 flex items-end justify-between">
+      <div className="mb-6 flex flex-col gap-4 sm:mb-10 lg:flex-row lg:items-end lg:justify-between">
         <Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">使用记录</Typography.Title>
-        <Space><Input.Search allowClear enterButton="搜索" placeholder="输入请求 ID" className="w-[360px]" value={requestIDInput} onChange={(event) => { const value = event.target.value; setRequestIDInput(value); if (!value) { setRequestID(''); setPage(1) } }} onSearch={(value) => { setRequestID(value.trim()); setPage(1) }} /><Button icon={<ReloadOutlined />} loading={requests.isFetching} onClick={refresh}>刷新</Button></Space>
+        <div className="flex w-full gap-2 lg:w-auto"><Input.Search allowClear enterButton="搜索" placeholder="输入请求 ID" className="min-w-0 flex-1 lg:w-[360px]" value={requestIDInput} onChange={(event) => { const value = event.target.value; setRequestIDInput(value); if (!value) { setRequestID(''); setPage(1) } }} onSearch={(value) => { setRequestID(value.trim()); setPage(1) }} /><Button icon={<ReloadOutlined />} loading={requests.isFetching} onClick={refresh}><span className="hidden sm:inline">刷新</span></Button></div>
       </div>
-      <Row gutter={16}>
+      <Row gutter={[12, 12]}>
         {metrics.map((metric, index) => (
-          <Col span={6} key={metric.key}>
-            <Card className="relative overflow-hidden" styles={{ body: { minHeight: 156 } }}>
+          <Col xs={12} xl={6} key={metric.key}>
+            <Card className="relative overflow-hidden" styles={{ body: { minHeight: 132 } }}>
               <div className="absolute right-0 top-0 h-full w-1 bg-[#d7783d]" style={{ opacity: .25 + index * .15 }} />
-              <div className="mb-8 text-sm text-[#7c8d86]">{metric.label}</div>
-              {loading ? <Skeleton.Input active size="large" /> : <div className="font-mono text-4xl font-medium tracking-[-.05em]">{data?.[metric.key] ?? 0}</div>}
+              <div className="mb-6 text-sm text-[#7c8d86] sm:mb-8">{metric.label}</div>
+              {loading ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{data?.[metric.key] ?? 0}</div>}
             </Card>
           </Col>
         ))}
       </Row>
-      <div style={{ marginTop: 32 }}>
+      <div className="mt-6 hidden lg:mt-8 lg:block">
         <Card className="overflow-hidden" styles={{ body: { padding: 0 } }}>
           <Table
           rowKey="id"
@@ -77,6 +77,30 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
           />
         </Card>
       </div>
+      <div className="mt-6 space-y-3 lg:hidden">
+        {requests.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : (requests.data?.items ?? []).length ? (requests.data?.items ?? []).map((record) => (
+          <Card key={record.id} size="small" className="cursor-pointer" onClick={() => setDetailID(record.id)}>
+            <div className="mb-3 flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <div className="text-xs text-[#7c8d86]">{new Date(record.created_at).toLocaleString()}</div>
+                <code className="mt-1 block break-all text-xs">{record.id}</code>
+              </div>
+              <Tag className="shrink-0" color={record.status === 'completed' ? 'success' : record.status === 'in_progress' ? 'processing' : 'error'}>{statusName(record.status)}</Tag>
+            </div>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <code className="min-w-0 break-all text-sm font-medium">{record.virtual_model}</code>
+              <span className="shrink-0 text-xs text-[#7c8d86]">{record.total_ms == null ? '—' : `${record.total_ms} ms`}</span>
+            </div>
+            <Space size={6} wrap>
+              <Tag style={{ marginInlineEnd: 0 }}>{protocolName(record.inbound_protocol)}</Tag>
+              <SwapRightOutlined className="text-[#7c8d86]" />
+              <Tag color="orange" style={{ marginInlineEnd: 0 }}>{protocolName(record.upstream_protocol)}</Tag>
+              <Tag color={record.stream ? 'processing' : undefined}>{record.stream ? '流式' : '非流式'}</Tag>
+            </Space>
+          </Card>
+        )) : <Card><Empty className="py-8" description={requestID ? '没有匹配该请求 ID 的记录' : '暂无请求记录'} /></Card>}
+        {!!requests.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={requests.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
+      </div>
       <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={() => setDetailID(null)} />
     </div>
   )
@@ -85,9 +109,10 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
 function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDetail; loading: boolean; open: boolean; onClose: () => void }) {
   const [reveal, setReveal] = useState(false)
   return (
-    <Drawer title={<span>请求轨迹 <code className="ml-2 text-xs">{detail?.id}</code></span>} width={920} open={open} onClose={() => { setReveal(false); onClose() }} loading={loading} extra={<Button onClick={() => setReveal((value) => !value)}>{reveal ? '遮罩凭据' : '显示原文'}</Button>}>
+    <Drawer rootClassName="mc-request-drawer" title="请求轨迹" size="min(920px, 100vw)" open={open} onClose={() => { setReveal(false); onClose() }} loading={loading} extra={<Button size="small" onClick={() => setReveal((value) => !value)}>{reveal ? '遮罩凭据' : '显示原文'}</Button>}>
       {detail && <>
-        <Descriptions size="small" column={3} className="mb-6" items={[
+        <Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} className="mb-6" items={[
+          { key: 'id', label: '请求 ID', children: <code className="break-all">{detail.id}</code> },
           { key: 'status', label: '状态', children: <Tag color={detail.status === 'completed' ? 'success' : 'error'}>{statusName(detail.status)}</Tag> },
           { key: 'model', label: '虚拟模型', children: <code>{detail.virtual_model}</code> },
           { key: 'protocol', label: '入站协议', children: protocolName(detail.inbound_protocol) },
@@ -105,8 +130,8 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
           { key: 'response', label: '客户端响应', children: <PayloadPair headerLabel="响应头" headers={detail.response_headers} body={detail.response_body} reveal={reveal} /> },
           { key: 'attempts', label: `上游尝试 ${detail.attempts.length}`, children: detail.attempts.length ? <Collapse items={detail.attempts.map((attempt) => ({
             key: attempt.id,
-            label: <Space><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code>{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag></Space>,
-            children: <div className="space-y-6"><Descriptions size="small" column={3} items={[
+            label: <Space wrap><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code className="break-all">{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag></Space>,
+            children: <div className="space-y-6"><Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
               { key: 'endpoint', label: '上游端点', span: 3, children: <code className="break-all">{attempt.upstream_endpoint}</code> },
               { key: 'key', label: '上游密钥', children: attempt.upstream_key_name || '未命名' },
               { key: 'status', label: '响应状态', children: attempt.response_status ?? '—' },
@@ -129,7 +154,7 @@ function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal }
 }
 
 function Payload({ value }: { value: string }) {
-  return <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-all rounded border border-black/10 bg-black/[.025] p-4 font-mono text-xs leading-5 dark:border-white/10 dark:bg-white/[.03]">{formatJSON(value) || '—'}</pre>
+  return <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-all rounded border border-black/10 bg-black/[.025] p-3 font-mono text-xs leading-5 dark:border-white/10 dark:bg-white/[.03] sm:p-4">{formatJSON(value) || '—'}</pre>
 }
 
 function formatJSON(value: string): string {
