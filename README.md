@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="web/public/model-confluence.svg" alt="模汇项目标识" width="120" height="120">
+</p>
+
 # 模汇（model-confluence）
 
 模汇是一款面向个人私有部署的 AI 协议网关。它为 Codex、Claude Code 和 OpenAI 兼容客户端提供统一入口，在 OpenAI Chat Completions、OpenAI Responses 与 Anthropic Messages 之间自动转换协议，并通过 SQLite 记录请求、上游尝试、Token 用量和延迟。
