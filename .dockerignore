@@ -1,0 +1,13 @@
+.git/
+.github/
+.tmp/
+data/
+docs/
+internal/webui/dist/
+web/node_modules/
+web/*.tsbuildinfo
+*.db
+*.db-shm
+*.db-wal
+*.exe
+model-confluence

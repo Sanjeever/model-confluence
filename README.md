@@ -8,7 +8,7 @@
 
 项目采用 Go + React + TypeScript 开发。正式构建时，管理后台会嵌入 Go 可执行文件，运行时只需要一个可执行文件和一个数据目录。
 
-> 项目仍处于首版开发阶段。已经实现的功能以本 README 为准，完整产品边界和设计取舍见 [docs/requirements.md](docs/requirements.md)。
+> 当前实现以本 README 为准，完整产品边界和设计取舍见 [docs/requirements.md](docs/requirements.md)。
 
 ## 界面预览
 
@@ -61,6 +61,50 @@
 - 数据库：SQLite（`modernc.org/sqlite`，无需 CGO）
 - 前端：React 19、TypeScript、Vite、Ant Design、Tailwind CSS
 - 数据获取：TanStack Query
+
+## 下载与运行
+
+正式版本发布在 [GitHub Releases](https://github.com/Sanjeever/model-confluence/releases/latest)，包含以下文件：
+
+| 平台 | 文件 |
+| --- | --- |
+| macOS Apple Silicon | `model-confluence_VERSION_darwin_arm64.tar.gz` |
+| Windows 64 位 | `model-confluence_VERSION_windows_amd64.zip` |
+| Linux 64 位 | `model-confluence_VERSION_linux_amd64.tar.gz` |
+
+每个 Release 同时提供 `checksums.txt`。下载并解压后，首次使用空数据目录启动时必须设置管理员密码。
+
+macOS 或 Linux：
+
+```bash
+chmod +x model-confluence
+MODEL_CONFLUENCE_ADMIN_PASSWORD="请替换为管理员密码" ./model-confluence --listen 127.0.0.1:8080 --data-dir ./data
+```
+
+Windows PowerShell：
+
+```powershell
+$env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
+./model-confluence.exe --listen 127.0.0.1:8080 --data-dir ./data
+```
+
+macOS 版本暂未进行 Apple Developer 签名和公证，首次运行时可能需要在系统安全设置中确认打开。
+
+## Docker
+
+Docker 镜像发布到 GitHub Container Registry，同时支持 Linux `amd64` 和 `arm64`：
+
+```text
+ghcr.io/sanjeever/model-confluence
+```
+
+使用命名卷保存 SQLite 数据，并只在本机暴露管理端口：
+
+```bash
+docker run -d --name model-confluence -p 127.0.0.1:8080:8080 -v model-confluence-data:/data -e MODEL_CONFLUENCE_ADMIN_PASSWORD="请替换为管理员密码" ghcr.io/sanjeever/model-confluence:latest
+```
+
+管理员密码只在空数据卷首次初始化时使用。升级时保留 `model-confluence-data` 卷并替换镜像即可，不要同时运行多个容器访问同一个数据卷。
 
 ## 开发环境启动
 
@@ -140,6 +184,17 @@ $env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
 ./model-confluence.exe --listen 127.0.0.1:8080 --data-dir ./data
 ```
 
+## 发布
+
+推送符合 `vX.Y.Z` 格式的标签后，[发布工作流](.github/workflows/release.yml)会构建前端、运行 Go 测试、交叉编译三个平台的二进制、生成 SHA-256 校验文件、创建 GitHub Release，并发布 `linux/amd64`、`linux/arm64` Docker 镜像。
+
+维护者发布新版本时，先确保目标提交已经位于 `main`，再创建并推送标签。例如：
+
+```bash
+git tag -a v1.1.0 -m "v1.1.0"
+git push origin v1.1.0
+```
+
 ## 运行参数
 
 | 参数 | 环境变量 | 默认值 | 说明 |
@@ -190,6 +245,8 @@ internal/protocol/      三协议请求、响应和 SSE 转换
 internal/store/         SQLite 模型、迁移、路由和日志
 internal/webui/         前端嵌入与构建产物
 web/src/                React 管理后台源码
+.github/workflows/      GitHub Actions 发布工作流
+Dockerfile              多架构容器镜像构建
 docs/requirements.md    首版产品需求与设计边界
 ```
 
@@ -200,3 +257,7 @@ docs/requirements.md    首版产品需求与设计边界
 - 新增数据库字段时既要更新建库 schema，也要为已有数据库补充兼容迁移。
 - 协议转换应保持请求与响应对称，尤其要覆盖流式事件、工具调用和多轮 reasoning/thinking 回传。
 - 项目提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)。
+
+## 许可证
+
+本项目使用 [MIT License](LICENSE)。

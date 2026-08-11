@@ -18,6 +18,8 @@
 - `internal/store`：SQLite schema、兼容迁移、配置、路由解析和请求日志。
 - `internal/webui`：通过 `embed` 托管 `dist`。
 - `web/src`：React 管理后台源码。
+- `.github/workflows/release.yml`：版本标签触发的二进制与容器发布流程。
+- `Dockerfile`：Linux `amd64`、`arm64` 多架构容器构建。
 - `docs/requirements.md`：首版产品需求与长期设计边界。
 
 ## 开发命令
@@ -51,6 +53,15 @@ go test ./...
 cd web
 pnpm build
 ```
+
+## 构建与发布约束
+
+- 正式发布以 `vX.Y.Z` Git 标签为唯一触发入口，由 `.github/workflows/release.yml` 创建 GitHub Release 和 GHCR 镜像。
+- 发布工作流必须先重新构建 `internal/webui/dist`，再执行 Go 测试和交叉编译；不能直接信任仓库中的旧前端产物。
+- 二进制发布目标为 macOS `arm64`、Windows `amd64` 和 Linux `amd64`；Docker 镜像目标为 Linux `amd64`、`arm64`。
+- Docker 容器内监听 `0.0.0.0:8080`，SQLite 数据固定保存在 `/data`，最终镜像使用非 root 用户运行。
+- 管理员密码和其他凭据只能在运行容器时注入，禁止写入 Dockerfile、镜像层、GitHub Actions 或发布产物。
+- 未经用户明确要求，不创建、移动、覆盖或推送版本标签，不修改已经发布的 Release。
 
 ## 后端约束
 
@@ -94,5 +105,6 @@ pnpm build
 
 - 默认分支为 `main`。
 - 提交信息遵循 Conventional Commits，默认使用英文，例如：`feat: add protocol-aware AI gateway`。
+- 发布标签使用 `vX.Y.Z` 格式，并且必须指向已经推送到 `main` 的提交。
 - 提交前查看 `git status` 和 staged diff，确保不包含 `data`、数据库、密钥、临时文件、Node 依赖或本地可执行文件。
 - 未经用户明确要求，不 amend、rebase、force push 或修改已有提交历史。
