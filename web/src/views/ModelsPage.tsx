@@ -10,7 +10,7 @@ const protocolLabels: Record<CandidateProtocol['protocol'], string> = {
   messages: 'Messages',
 }
 
-type CandidateForm = { id?: number; provider_id: number; upstream_model: string; default_max_output_tokens: number; max_output_tokens: number; protocols: CandidateProtocol['protocol'][] }
+type CandidateForm = { id?: number; provider_id?: number; upstream_model?: string; default_max_output_tokens: number; max_output_tokens: number; protocols: CandidateProtocol['protocol'][] }
 type ModelForm = { name: string; candidates: CandidateForm[] }
 
 export default function ModelsPage() {
@@ -63,7 +63,7 @@ export default function ModelsPage() {
   function createModel() {
     setEditing(null)
     form.resetFields()
-    form.setFieldsValue({ candidates: [{ default_max_output_tokens: 16384, max_output_tokens: 65536, protocols: [] } as CandidateForm] })
+    form.setFieldsValue({ candidates: [{ default_max_output_tokens: 16384, max_output_tokens: 65536, protocols: [] }] })
     setOpen(true)
   }
 
