@@ -82,8 +82,8 @@ export default function AccessKeysPage() {
           <Form.Item name="expires_at" label="过期时间（可选）"><DatePicker showTime className="w-full" placeholder="不填表示永不过期" /></Form.Item>
         </Form>
       </Modal>
-      <Modal title="密钥已创建" open={!!created} onCancel={() => setCreated(null)} footer={<Button type="primary" onClick={() => setCreated(null)}>我已保存</Button>}>
-        <Typography.Paragraph type="secondary">这是唯一一次完整展示，请立即保存。</Typography.Paragraph>
+      <Modal title="密钥已创建" open={!!created} onCancel={() => setCreated(null)} footer={<Button type="primary" onClick={() => setCreated(null)}>关闭</Button>}>
+        <Typography.Paragraph type="secondary">密钥已创建，之后仍可在访问密钥列表中查看和复制。</Typography.Paragraph>
         <Space.Compact className="w-full"><Input readOnly value={created?.secret} className="font-mono" /><Button icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(created?.secret ?? ''); message.success('已复制') }} /></Space.Compact>
       </Modal>
     </div>

@@ -49,12 +49,23 @@ func (s *Store) CreateAccessKey(name string, expiresAt *time.Time) (AccessKey, e
 	if expiresAt != nil {
 		expires = formatTime(*expiresAt)
 	}
-	result, err := s.db.Exec(`INSERT INTO access_keys (name, secret, enabled, expires_at, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)`, name, secret, expires, formatTime(now), formatTime(now))
+	tx, err := s.db.Begin()
+	if err != nil {
+		return AccessKey{}, err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`UPDATE access_keys SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, formatTime(now), name); err != nil {
+		return AccessKey{}, err
+	}
+	result, err := tx.Exec(`INSERT INTO access_keys (name, secret, enabled, expires_at, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?)`, name, secret, expires, formatTime(now), formatTime(now))
 	if err != nil {
 		return AccessKey{}, err
 	}
 	id, err := result.LastInsertId()
 	if err != nil {
+		return AccessKey{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return AccessKey{}, err
 	}
 	return AccessKey{ID: id, Name: name, Secret: secret, SecretHint: secretHint(secret), Enabled: true, ExpiresAt: expiresAt, CreatedAt: now}, nil
@@ -112,7 +123,8 @@ func (s *Store) DeleteAccessKey(id int64) (DeleteResult, error) {
 	}
 	result := DeleteResult{Archived: references > 0}
 	if result.Archived {
-		_, err = tx.Exec(`UPDATE access_keys SET enabled = 0, archived_at = ?, updated_at = ? WHERE id = ?`, formatTime(time.Now()), formatTime(time.Now()), id)
+		now := formatTime(time.Now())
+		_, err = tx.Exec(`UPDATE access_keys SET name = name || '#archived-' || id, enabled = 0, archived_at = ?, updated_at = ? WHERE id = ?`, now, now, id)
 	} else {
 		_, err = tx.Exec(`DELETE FROM access_keys WHERE id = ?`, id)
 	}

@@ -116,7 +116,7 @@ export default function ProvidersPage() {
         expandedRowRender: (record) => (
           <div className="grid grid-cols-2 gap-6 p-4">
             <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">协议端点</div>{Object.entries(record.endpoints).map(([key, value]) => <div key={key} className="mb-2 flex gap-3"><Tag>{key}</Tag><code className="break-all text-xs">{value}</code></div>)}</div>
-            <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">上游密钥池</div>{record.keys.map((key) => <div key={key.id} className="mb-2 flex items-center justify-between border-b border-black/5 pb-2 dark:border-white/5"><span>{key.name || `密钥 ${key.position + 1}`} · <code>{key.secret_hint}</code></span><Tag color={key.runtime_status === 'available' ? 'success' : 'warning'}>{key.runtime_status}</Tag></div>)}</div>
+            <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">上游密钥池</div>{record.keys.map((key) => <div key={key.id} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 border-b border-black/5 pb-2 dark:border-white/5"><span className="min-w-0">{key.name || `密钥 ${key.position + 1}`} · <code className="break-all text-xs">{key.secret || '—'}</code></span><Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{runtimeStatusName(key.runtime_status)}</Tag></div>)}</div>
           </div>
         ),
       }} columns={[
@@ -144,4 +144,8 @@ export default function ProvidersPage() {
 
 function PageHeader({ title, children }: { title: string; children: React.ReactNode }) {
   return <div className="mb-8 flex items-end justify-between"><Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">{title}</Typography.Title>{children}</div>
+}
+
+function runtimeStatusName(value: string): string {
+  return ({ available: '可用', auth_invalid: '鉴权失效', quota_exhausted: '额度耗尽', rate_limited: '限流冷却' } as Record<string, string>)[value] ?? value
 }

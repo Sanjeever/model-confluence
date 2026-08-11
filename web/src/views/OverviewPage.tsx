@@ -52,28 +52,31 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
           </Col>
         ))}
       </Row>
-      <Card className="mt-5" styles={{ body: { padding: 0, minHeight: 330 } }}>
-        <Table
+      <div style={{ marginTop: 32 }}>
+        <Card className="overflow-hidden" styles={{ body: { padding: 0 } }}>
+          <Table
           rowKey="id"
           loading={requests.isPending}
           dataSource={requests.data?.items ?? []}
+          scroll={{ x: 1380, y: 'calc(100vh - 430px)' }}
           onRow={(record) => ({ onClick: () => setDetailID(record.id), className: 'cursor-pointer' })}
           pagination={{ current: page, pageSize, total: requests.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }}
           locale={{ emptyText: <Empty className="py-14" description={requestID ? '没有匹配该请求 ID 的记录' : '创建访问密钥、供应商和模型路由后，请求记录会出现在这里'} /> }}
           columns={[
             { title: '请求时间', dataIndex: 'created_at', width: 190, render: (value) => new Date(value).toLocaleString() },
-            { title: '请求 ID', dataIndex: 'id', render: (value) => <code>{value}</code> },
-            { title: '模型', dataIndex: 'virtual_model', render: (value) => <code>{value}</code> },
-            { title: '协议', render: (_, record) => <Space size={4}><Tag>{protocolName(record.inbound_protocol)}</Tag><SwapRightOutlined className="text-[#7c8d86]" /><Tag color="orange">{protocolName(record.upstream_protocol)}</Tag></Space> },
-            { title: '请求方式', dataIndex: 'stream', render: (value) => value ? <Tag color="processing">流式</Tag> : <Tag>非流式</Tag> },
-            { title: '访问密钥', dataIndex: 'access_key_name' },
-            { title: '首内容', dataIndex: 'first_content_ms', align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
-            { title: '总耗时', dataIndex: 'total_ms', align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
-            { title: '状态', dataIndex: 'status', align: 'right', render: (value) => <Tag color={value === 'completed' ? 'success' : value === 'in_progress' ? 'processing' : 'error'}>{statusName(value)}</Tag> },
+            { title: '请求 ID', dataIndex: 'id', width: 180, render: (value) => <code>{value}</code> },
+            { title: '模型', dataIndex: 'virtual_model', width: 160, render: (value) => <code>{value}</code> },
+            { title: '协议', width: 240, render: (_, record) => <Space size={6} className="whitespace-nowrap"><Tag style={{ marginInlineEnd: 0 }}>{protocolName(record.inbound_protocol)}</Tag><SwapRightOutlined className="text-[#7c8d86]" /><Tag color="orange" style={{ marginInlineEnd: 0 }}>{protocolName(record.upstream_protocol)}</Tag></Space> },
+            { title: '请求方式', dataIndex: 'stream', width: 100, render: (value) => value ? <Tag color="processing">流式</Tag> : <Tag>非流式</Tag> },
+            { title: '访问密钥', dataIndex: 'access_key_name', width: 140 },
+            { title: '首内容', dataIndex: 'first_content_ms', width: 100, align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
+            { title: '总耗时', dataIndex: 'total_ms', width: 100, align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
+            { title: '状态', dataIndex: 'status', width: 90, align: 'right', render: (value) => <Tag color={value === 'completed' ? 'success' : value === 'in_progress' ? 'processing' : 'error'}>{statusName(value)}</Tag> },
             { title: '', width: 48, render: (_, record) => <Button type="text" icon={<EyeOutlined />} aria-label={`查看 ${record.id}`} onClick={(event) => { event.stopPropagation(); setDetailID(record.id) }} /> },
           ]}
-        />
-      </Card>
+          />
+        </Card>
+      </div>
       <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={() => setDetailID(null)} />
     </div>
   )
@@ -99,7 +102,7 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
         ]} />
         <Tabs items={[
           { key: 'inbound', label: '入站请求', children: <PayloadPair headers={detail.request_headers} body={detail.request_body} reveal={reveal} /> },
-          { key: 'response', label: '客户端响应', children: <PayloadPair headers={detail.response_headers} body={detail.response_body} reveal={reveal} /> },
+          { key: 'response', label: '客户端响应', children: <PayloadPair headerLabel="响应头" headers={detail.response_headers} body={detail.response_body} reveal={reveal} /> },
           { key: 'attempts', label: `上游尝试 ${detail.attempts.length}`, children: detail.attempts.length ? <Collapse items={detail.attempts.map((attempt) => ({
             key: attempt.id,
             label: <Space><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code>{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag></Space>,
@@ -108,7 +111,7 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
               { key: 'key', label: '上游密钥', children: attempt.upstream_key_name || '未命名' },
               { key: 'status', label: '响应状态', children: attempt.response_status ?? '—' },
               { key: 'latency', label: '总耗时', children: attempt.total_ms == null ? '—' : `${attempt.total_ms} ms` },
-            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><Payload value={attempt.raw_usage_json} /></div>}</div>,
+            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><Payload value={attempt.raw_usage_json} /></div>}</div>,
           }))} /> : <Empty className="py-16" description="该请求在调用上游前失败，没有产生上游尝试" /> },
         ]} />
       </>}
@@ -116,12 +119,11 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
   )
 }
 
-function PayloadPair({ title, headers, body, reveal }: { title?: string; headers: string; body: string; reveal: boolean }) {
+function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal }: { title?: string; headerLabel?: string; headers: string; body: string; reveal: boolean }) {
   return <div>
     {title && <div className="mc-eyebrow mb-3 text-[#7c8d86]">{title}</div>}
-    <div className="mb-2 text-xs font-medium text-[#7c8d86]">请求头</div>
-    <Payload value={reveal ? headers : maskHeaders(headers)} />
-    <div className="mb-2 mt-5 text-xs font-medium text-[#7c8d86]">正文</div>
+    <Collapse size="small" className="mb-5" items={[{ key: 'headers', label: headerLabel, children: <Payload value={reveal ? headers : maskHeaders(headers)} /> }]} />
+    <div className="mb-2 text-xs font-medium text-[#7c8d86]">正文</div>
     <Payload value={body} />
   </div>
 }

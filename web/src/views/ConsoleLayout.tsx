@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Layout, Menu, Switch } from 'antd'
-import { ApiOutlined, BranchesOutlined, DatabaseOutlined, KeyOutlined, LogoutOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
+import { ApiOutlined, BranchesOutlined, DatabaseOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 import { api, type Overview } from '../api'
 import OverviewPage from './OverviewPage'
 import AccessKeysPage from './AccessKeysPage'
@@ -14,6 +14,7 @@ type Page = 'overview' | 'keys' | 'providers' | 'models'
 
 export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; onThemeChange: (value: boolean) => void }) {
   const [page, setPage] = useState<Page>('overview')
+  const [collapsed, setCollapsed] = useState(false)
   const queryClient = useQueryClient()
   const overview = useQuery({ queryKey: ['overview'], queryFn: () => api<Overview>('/api/admin/overview') })
 
@@ -25,18 +26,20 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
 
   return (
     <Layout className="mc-noise h-screen overflow-hidden">
-      <Sider width={252} className="h-screen shrink-0 border-r border-black/10 dark:border-white/10">
+      <Sider width={252} collapsedWidth={80} collapsed={collapsed} trigger={null} className="h-screen shrink-0 border-r border-black/10 dark:border-white/10">
         <div className="flex h-full flex-col">
-          <div className="flex h-24 shrink-0 items-center border-b border-black/10 px-7 dark:border-white/10">
-            <div>
+          <div className={`flex h-24 shrink-0 items-center border-b border-black/10 dark:border-white/10 ${collapsed ? 'justify-center px-2' : 'justify-between px-7'}`}>
+            {!collapsed && <div>
               <div className={`text-2xl font-semibold tracking-[-.04em] ${dark ? 'text-[#e5ebe7]' : 'text-[#18211f]'}`}>模汇</div>
               <div className="mt-1 text-xs text-[#6f817a]">大模型网关</div>
-            </div>
+            </div>}
+            <Button type="text" icon={collapsed ? <MenuUnfoldOutlined /> : <MenuFoldOutlined />} aria-label={collapsed ? '展开侧栏' : '收起侧栏'} onClick={() => setCollapsed((value) => !value)} />
           </div>
           <div className="flex-1 overflow-y-auto px-3 py-5">
             <Menu
               theme={dark ? 'dark' : 'light'}
               mode="inline"
+              inlineCollapsed={collapsed}
               style={{ background: 'transparent' }}
               selectedKeys={[page]}
               onSelect={({ key }) => setPage(key as Page)}
@@ -48,12 +51,12 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
               ]}
             />
           </div>
-          <div className="shrink-0 border-t border-black/10 p-5 dark:border-white/10">
-            <div className="mb-5 flex items-center justify-between text-xs text-[#84968f]">
-              <span>外观</span>
+          <div className={`shrink-0 border-t border-black/10 dark:border-white/10 ${collapsed ? 'px-2 py-5' : 'p-5'}`}>
+            <div className={`mb-4 flex items-center text-xs text-[#84968f] ${collapsed ? 'justify-center' : 'justify-between'}`}>
+              {!collapsed && <span>外观</span>}
               <Switch checked={dark} onChange={onThemeChange} checkedChildren={<MoonOutlined />} unCheckedChildren={<SunOutlined />} />
             </div>
-            <Button type="text" danger icon={<LogoutOutlined />} onClick={logout} block>退出登录</Button>
+            <Button type="text" danger icon={<LogoutOutlined />} onClick={logout} block>{collapsed ? null : '退出登录'}</Button>
           </div>
         </div>
       </Sider>
