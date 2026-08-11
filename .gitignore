@@ -1,0 +1,19 @@
+# Go
+/model-confluence
+*.exe
+
+# Frontend
+/web/node_modules/
+*.tsbuildinfo
+/web/vite.config.js
+/web/vite.config.d.ts
+
+# Runtime
+/data/
+*.db
+*.db-shm
+*.db-wal
+
+# Editors
+.idea/
+.vscode/
