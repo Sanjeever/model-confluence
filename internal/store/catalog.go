@@ -428,6 +428,12 @@ func (s *Store) ListVirtualModels() ([]VirtualModel, error) {
 	return models, rows.Err()
 }
 
+func (s *Store) VirtualModelName(id int64) (string, error) {
+	var name string
+	err := s.db.QueryRow(`SELECT name FROM virtual_models WHERE id = ? AND archived_at IS NULL`, id).Scan(&name)
+	return name, err
+}
+
 func (s *Store) CreateVirtualModel(input CreateVirtualModelInput) (VirtualModel, error) {
 	tx, err := s.db.Begin()
 	if err != nil {

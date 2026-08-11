@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"time"
 
@@ -59,12 +60,31 @@ func (h *Handler) models(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
-	started := time.Now()
 	inboundProtocol := protocolFromPath(r.URL.Path)
 	accessKey, ok := h.authenticate(w, r, inboundProtocol)
 	if !ok {
 		return
 	}
+	h.generateAuthorized(w, r, inboundProtocol, &accessKey.ID, accessKey.Name)
+}
+
+func (h *Handler) TestModel(ctx context.Context, model, prompt string) (int, []byte, string) {
+	body, _ := json.Marshal(map[string]any{
+		"model":      model,
+		"messages":   []map[string]string{{"role": "user", "content": prompt}},
+		"max_tokens": 256,
+		"stream":     false,
+	})
+	request := httptest.NewRequestWithContext(ctx, http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("User-Agent", "model-confluence-admin-test")
+	recorder := httptest.NewRecorder()
+	h.generateAuthorized(recorder, request, protocolChat, nil, "管理后台测试")
+	return recorder.Code, recorder.Body.Bytes(), recorder.Header().Get("X-Request-ID")
+}
+
+func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inboundProtocol string, accessKeyID *int64, accessKeyName string) {
+	started := time.Now()
 	body, err := readBody(w, r, h.maxBody)
 	if err != nil {
 		return
@@ -80,7 +100,7 @@ func (h *Handler) generate(w http.ResponseWriter, r *http.Request) {
 
 	headersJSON := marshalHeaders(r.Header)
 	if startErr := h.store.StartRequest(store.RequestStart{
-		ID: requestID, AccessKeyID: accessKey.ID, AccessKeyName: accessKey.Name, VirtualModel: requestMeta.Model,
+		ID: requestID, AccessKeyID: accessKeyID, AccessKeyName: accessKeyName, VirtualModel: requestMeta.Model,
 		InboundProtocol: inboundProtocol, InboundEndpoint: r.URL.Path, Stream: requestMeta.Stream, ReasoningEffort: requestMeta.Effort,
 		ClientIP: h.clientIP.Resolve(r), UserAgent: r.UserAgent(), Headers: headersJSON, Body: body, CreatedAt: started.UTC(),
 	}); startErr != nil {

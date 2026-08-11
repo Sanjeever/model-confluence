@@ -106,6 +106,11 @@ export type VirtualModel = {
   created_at: string
 }
 
+export type ModelTestResult = {
+  request_id: string
+  response: unknown
+}
+
 export type RequestSummary = {
   id: string
   status: string

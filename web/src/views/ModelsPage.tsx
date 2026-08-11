@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Collapse, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from 'antd'
-import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
-import { api, type CandidateProtocol, type DeleteResult, type Provider, type VirtualModel } from '../api'
+import { App, Button, Card, Collapse, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, ExperimentOutlined, PlusOutlined } from '@ant-design/icons'
+import { api, type CandidateProtocol, type DeleteResult, type ModelTestResult, type Provider, type VirtualModel } from '../api'
+import JsonPayload from '../components/JsonPayload'
 
 const protocolLabels: Record<CandidateProtocol['protocol'], string> = {
   chat_completions: 'Chat Completions',
@@ -16,7 +17,11 @@ type ModelForm = { name: string; candidates: CandidateForm[] }
 export default function ModelsPage() {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<VirtualModel | null>(null)
+  const [testing, setTesting] = useState<VirtualModel | null>(null)
+  const [testPrompt, setTestPrompt] = useState('请简短回复：模型连接正常')
+  const [testResult, setTestResult] = useState<ModelTestResult | null>(null)
   const [form] = Form.useForm<ModelForm>()
+  const { message } = App.useApp()
   const queryClient = useQueryClient()
   const providers = useQuery({ queryKey: ['providers'], queryFn: () => api<Provider[]>('/api/admin/providers') })
   const models = useQuery({ queryKey: ['models'], queryFn: () => api<VirtualModel[]>('/api/admin/models') })
@@ -59,6 +64,16 @@ export default function ModelsPage() {
     },
     onError: (error) => message.error(error.message),
   })
+  const test = useMutation({
+    mutationFn: ({ id, prompt }: { id: number; prompt: string }) => api<ModelTestResult>(`/api/admin/models/${id}/test`, { method: 'POST', body: JSON.stringify({ prompt }) }),
+    onSuccess: (result) => {
+      setTestResult(result)
+      message.success('模型测试完成')
+      queryClient.invalidateQueries({ queryKey: ['requests'] })
+      queryClient.invalidateQueries({ queryKey: ['overview'] })
+    },
+    onError: (error) => message.error(error.message),
+  })
 
   function createModel() {
     setEditing(null)
@@ -79,6 +94,11 @@ export default function ModelsPage() {
     setOpen(true)
   }
 
+  function testModel(model: VirtualModel) {
+    setTesting(model)
+    setTestResult(null)
+  }
+
   return (
     <div className="mc-enter mx-auto max-w-[1500px]">
       <div className="mb-6 flex items-center justify-between gap-3 sm:mb-8"><Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">模型路由</Typography.Title><Button type="primary" icon={<PlusOutlined />} onClick={createModel} disabled={!providers.data?.length}>新增虚拟模型</Button></div>
@@ -89,7 +109,7 @@ export default function ModelsPage() {
           { title: '首选供应商', dataIndex: 'candidates', render: (value) => value[0]?.provider_name ?? '—' },
           { title: '状态', dataIndex: 'enabled', render: (value) => value ? <Tag color="success">启用</Tag> : <Tag>停用</Tag> },
           { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
-          { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editModel(record)} /><Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
+          { title: '操作', width: 148, align: 'right', render: (_, record) => <Space size={4}><Tooltip title={record.enabled ? '测试模型' : '启用后可测试'}><span><Button type="text" icon={<ExperimentOutlined />} aria-label={`测试 ${record.name}`} disabled={!record.enabled} onClick={() => testModel(record)} /></span></Tooltip><Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${record.name}`} onClick={() => editModel(record)} /><Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${record.name}`} /></Popconfirm></Space> },
         ]} />
       </div>
       <div className="space-y-3 lg:hidden">
@@ -102,6 +122,7 @@ export default function ModelsPage() {
             <Collapse ghost size="small" items={[{ key: 'candidates', label: '查看候选顺序', children: <ModelCandidates model={model} compact /> }]} />
             <div className="mt-2 flex items-center justify-end gap-1">
               <Switch size="small" checked={model.enabled} onChange={(value) => toggle.mutate({ id: model.id, enabled: value })} />
+              <Tooltip title={model.enabled ? '测试模型' : '启用后可测试'}><span><Button type="text" icon={<ExperimentOutlined />} aria-label={`测试 ${model.name}`} disabled={!model.enabled} onClick={() => testModel(model)} /></span></Tooltip>
               <Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${model.name}`} onClick={() => editModel(model)} />
               <Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(model.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${model.name}`} /></Popconfirm>
             </div>
@@ -113,6 +134,16 @@ export default function ModelsPage() {
           <Form.Item name="name" label="虚拟模型名" rules={[{ required: true }]}><Input placeholder="例如：coding-primary" className="font-mono" /></Form.Item>
           <Form.List name="candidates">{(fields, { add, remove: removeField }) => <div className="space-y-4">{fields.map(({ key, ...field }, index) => <div key={key} className="rounded border border-black/10 p-3 dark:border-white/10 sm:p-4"><Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item><div className="mb-4 flex justify-between"><span className="text-sm font-medium text-[#d7783d]">候选 {String(index + 1).padStart(2, '0')}</span><Button type="text" danger icon={<DeleteOutlined />} disabled={fields.length === 1} onClick={() => removeField(field.name)} /></div><div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2"><Form.Item {...field} name={[field.name, 'provider_id']} label="供应商" rules={[{ required: true }]}><Select options={providers.data?.map((item) => ({ value: item.id, label: item.enabled ? item.name : `${item.name}（停用）` }))} onChange={(providerID) => { const available = configuredProtocols(providerID, providers.data); form.setFieldValue(['candidates', field.name, 'protocols'], available.length ? [available[0]] : []) }} /></Form.Item><Form.Item {...field} name={[field.name, 'upstream_model']} label="真实模型名" rules={[{ required: true }]}><Input className="font-mono" /></Form.Item><Form.Item {...field} name={[field.name, 'default_max_output_tokens']} label="默认最大输出" rules={[{ required: true }]}><InputNumber min={1} className="!w-full" /></Form.Item><Form.Item {...field} name={[field.name, 'max_output_tokens']} label="输出上限" rules={[{ required: true }]}><InputNumber min={1} className="!w-full" /></Form.Item></div><Form.Item noStyle shouldUpdate>{({ getFieldValue }) => <Form.Item name={[field.name, 'protocols']} label="协议入口及后备顺序" rules={[{ required: true, message: '请选择至少一个供应商已配置的协议' }]}><ProtocolOrderField available={configuredProtocols(getFieldValue(['candidates', field.name, 'provider_id']), providers.data)} /></Form.Item>}</Form.Item></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ default_max_output_tokens: 16384, max_output_tokens: 65536, protocols: [] })} block>添加后备候选</Button></div>}</Form.List>
         </Form>
+      </Modal>
+      <Modal wrapClassName="mc-responsive-modal" title="测试模型" width={720} open={!!testing} onCancel={() => { setTesting(null); setTestResult(null); test.reset() }} onOk={() => testing && test.mutate({ id: testing.id, prompt: testPrompt.trim() })} okButtonProps={{ disabled: !testPrompt.trim() }} confirmLoading={test.isPending} okText="发送测试" cancelText="关闭">
+        {testing && <div className="space-y-5 pt-4">
+          <div className="text-sm text-[#7c8d86]">虚拟模型 <code className="ml-2 text-inherit">{testing.name}</code></div>
+          <Input.TextArea value={testPrompt} onChange={(event) => { setTestPrompt(event.target.value); setTestResult(null) }} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="输入测试内容" />
+          {testResult && <div>
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2 text-xs text-[#7c8d86]"><span>模型响应</span><code className="break-all">{testResult.request_id}</code></div>
+            <JsonPayload value={JSON.stringify(testResult.response)} />
+          </div>}
+        </div>}
       </Modal>
     </div>
   )

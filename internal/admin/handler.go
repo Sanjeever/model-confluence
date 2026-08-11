@@ -1,7 +1,9 @@
 package admin
 
 import (
+	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
@@ -23,10 +25,15 @@ type Handler struct {
 	store    *store.Store
 	clientIP *httpx.ClientIPResolver
 	limiter  *loginLimiter
+	tester   modelTester
 }
 
-func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver) *Handler {
-	return &Handler{store: store, clientIP: clientIP, limiter: newLoginLimiter()}
+type modelTester interface {
+	TestModel(context.Context, string, string) (int, []byte, string)
+}
+
+func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver, tester modelTester) *Handler {
+	return &Handler{store: store, clientIP: clientIP, limiter: newLoginLimiter(), tester: tester}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -49,6 +56,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteProvider))))
 	mux.Handle("GET /api/admin/models", h.requireSession(http.HandlerFunc(h.listModels)))
 	mux.Handle("POST /api/admin/models", h.requireSession(h.requireCSRF(http.HandlerFunc(h.createModel))))
+	mux.Handle("POST /api/admin/models/{id}/test", h.requireSession(h.requireCSRF(http.HandlerFunc(h.testModel))))
 	mux.Handle("PATCH /api/admin/models/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.updateModel))))
 	mux.Handle("PUT /api/admin/models/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editModel))))
 	mux.Handle("DELETE /api/admin/models/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteModel))))
@@ -375,6 +383,53 @@ func (h *Handler) createModel(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) updateModel(w http.ResponseWriter, r *http.Request) {
 	h.updateEnabled(w, r, h.store.SetVirtualModelEnabled)
+}
+
+func (h *Handler) testModel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的模型 ID"})
+		return
+	}
+	model, err := h.store.VirtualModelName(id)
+	if err != nil {
+		writeStoreError(w, err, "模型路由不存在")
+		return
+	}
+	var input struct {
+		Prompt string `json:"prompt"`
+	}
+	if !httpx.DecodeJSON(w, r, &input) {
+		return
+	}
+	input.Prompt = strings.TrimSpace(input.Prompt)
+	if input.Prompt == "" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "测试内容不能为空"})
+		return
+	}
+	status, body, requestID := h.tester.TestModel(r.Context(), model, input.Prompt)
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		httpx.WriteJSON(w, status, map[string]string{"error": gatewayErrorMessage(body), "request_id": requestID})
+		return
+	}
+	var response json.RawMessage
+	if err := json.Unmarshal(body, &response); err != nil {
+		httpx.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": "模型返回了无效的 JSON", "request_id": requestID})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"request_id": requestID, "response": response})
+}
+
+func gatewayErrorMessage(body []byte) string {
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(body, &payload) == nil && payload.Error.Message != "" {
+		return payload.Error.Message
+	}
+	return strings.TrimSpace(string(body))
 }
 
 func (h *Handler) editModel(w http.ResponseWriter, r *http.Request) {

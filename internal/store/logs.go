@@ -7,7 +7,7 @@ import (
 
 type RequestStart struct {
 	ID              string
-	AccessKeyID     int64
+	AccessKeyID     *int64
 	AccessKeyName   string
 	VirtualModel    string
 	InboundProtocol string

@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Card, Col, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Row, Skeleton, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
+import JsonPayload from '../components/JsonPayload'
 
 const metrics: Array<{ key: keyof Overview; label: string }> = [
   { key: 'requests_today', label: '今日请求' },
@@ -136,7 +137,7 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
               { key: 'key', label: '上游密钥', children: attempt.upstream_key_name || '未命名' },
               { key: 'status', label: '响应状态', children: attempt.response_status ?? '—' },
               { key: 'latency', label: '总耗时', children: attempt.total_ms == null ? '—' : `${attempt.total_ms} ms` },
-            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><Payload value={attempt.raw_usage_json} /></div>}</div>,
+            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
           }))} /> : <Empty className="py-16" description="该请求在调用上游前失败，没有产生上游尝试" /> },
         ]} />
       </>}
@@ -147,19 +148,10 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
 function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal }: { title?: string; headerLabel?: string; headers: string; body: string; reveal: boolean }) {
   return <div>
     {title && <div className="mc-eyebrow mb-3 text-[#7c8d86]">{title}</div>}
-    <Collapse size="small" className="mb-5" items={[{ key: 'headers', label: headerLabel, children: <Payload value={reveal ? headers : maskHeaders(headers)} /> }]} />
+    <Collapse size="small" className="mb-5" items={[{ key: 'headers', label: headerLabel, children: <JsonPayload value={reveal ? headers : maskHeaders(headers)} /> }]} />
     <div className="mb-2 text-xs font-medium text-[#7c8d86]">正文</div>
-    <Payload value={body} />
+    <JsonPayload value={body} />
   </div>
-}
-
-function Payload({ value }: { value: string }) {
-  return <pre className="max-h-[420px] overflow-auto whitespace-pre-wrap break-all rounded border border-black/10 bg-black/[.025] p-3 font-mono text-xs leading-5 dark:border-white/10 dark:bg-white/[.03] sm:p-4">{formatJSON(value) || '—'}</pre>
-}
-
-function formatJSON(value: string): string {
-  if (!value) return ''
-  try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
 }
 
 function maskHeaders(value: string): string {
