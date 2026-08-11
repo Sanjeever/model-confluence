@@ -10,6 +10,26 @@
 
 > 项目仍处于首版开发阶段。已经实现的功能以本 README 为准，完整产品边界和设计取舍见 [docs/requirements.md](docs/requirements.md)。
 
+## 界面预览
+
+> 请使用演示数据截图，避免暴露真实访问密钥、供应商密钥和请求内容。
+
+### 使用记录
+
+![使用记录](docs/screenshots/usage-records.png)
+
+### 请求详情
+
+![请求详情](docs/screenshots/request-detail.png)
+
+### 供应商管理
+
+![供应商管理](docs/screenshots/providers.png)
+
+### 模型路由
+
+![模型路由](docs/screenshots/model-routes.png)
+
 ## 核心能力
 
 - 统一提供 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 和 `/v1/models`。
