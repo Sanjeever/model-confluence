@@ -104,6 +104,38 @@ ghcr.io/sanjeever/model-confluence
 docker run -d --name model-confluence -p 127.0.0.1:8080:8080 -v model-confluence-data:/data -e MODEL_CONFLUENCE_ADMIN_PASSWORD="请替换为管理员密码" ghcr.io/sanjeever/model-confluence:latest
 ```
 
+使用 Docker Compose 时，新建 `compose.yaml`：
+
+```yaml
+services:
+  model-confluence:
+    image: ghcr.io/sanjeever/model-confluence:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"
+    environment:
+      MODEL_CONFLUENCE_ADMIN_PASSWORD: "${MODEL_CONFLUENCE_ADMIN_PASSWORD:-}"
+    volumes:
+      - model-confluence-data:/data
+
+volumes:
+  model-confluence-data:
+```
+
+首次启动前，在当前终端设置管理员密码：
+
+```bash
+export MODEL_CONFLUENCE_ADMIN_PASSWORD="请替换为管理员密码"
+docker compose up -d
+```
+
+Windows PowerShell：
+
+```powershell
+$env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
+docker compose up -d
+```
+
 管理员密码只在空数据卷首次初始化时使用。升级时保留 `model-confluence-data` 卷并替换镜像即可，不要同时运行多个容器访问同一个数据卷。
 
 ## 开发环境启动
