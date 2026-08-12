@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { Button, Drawer, Layout, Menu, Switch } from 'antd'
 import { ApiOutlined, BranchesOutlined, DatabaseOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
+import dayjs from 'dayjs'
 import { api, type Overview } from '../api'
 import OverviewPage from './OverviewPage'
 import AccessKeysPage from './AccessKeysPage'
@@ -24,7 +25,13 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
   const [collapsed, setCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const queryClient = useQueryClient()
-  const overview = useQuery({ queryKey: ['overview'], queryFn: () => api<Overview>('/api/admin/overview') })
+  const today = dayjs().startOf('day')
+  const overviewFrom = today.toISOString()
+  const overviewTo = today.add(1, 'day').toISOString()
+  const overview = useQuery({
+    queryKey: ['overview', overviewFrom, overviewTo],
+    queryFn: () => api<Overview>(`/api/admin/overview?created_from=${encodeURIComponent(overviewFrom)}&created_to=${encodeURIComponent(overviewTo)}`),
+  })
 
   async function logout() {
     await api('/api/admin/logout', { method: 'POST' })

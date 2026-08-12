@@ -162,12 +162,20 @@ type AttemptDetail struct {
 	CompletedAt      *time.Time `json:"completed_at"`
 }
 
-func (s *Store) ListRequests(page, pageSize int, requestID string) (RequestPage, error) {
+func (s *Store) ListRequests(page, pageSize int, requestID string, createdFrom, createdTo time.Time) (RequestPage, error) {
+	where := "r.created_at >= ? AND r.created_at < ?"
+	args := []any{formatTime(createdFrom), formatTime(createdTo)}
+	if requestID != "" {
+		where += " AND instr(r.id, ?) > 0"
+		args = append(args, requestID)
+	}
 	var total int
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM requests WHERE ? = '' OR instr(id, ?) > 0`, requestID, requestID).Scan(&total); err != nil {
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM requests r WHERE "+where, args...).Scan(&total); err != nil {
 		return RequestPage{}, err
 	}
-	rows, err := s.db.Query(`SELECT r.id, r.status, COALESCE(r.access_key_name, ''), COALESCE(r.virtual_model, ''), r.inbound_protocol, COALESCE((SELECT a.upstream_protocol FROM attempts a WHERE a.request_id = r.id ORDER BY a.position DESC LIMIT 1), ''), r.stream, r.client_ip, COALESCE(r.user_agent, ''), r.response_status, r.first_content_ms, r.total_ms, r.created_at, r.completed_at FROM requests r WHERE ? = '' OR instr(r.id, ?) > 0 ORDER BY r.created_at DESC LIMIT ? OFFSET ?`, requestID, requestID, pageSize, (page-1)*pageSize)
+	listArgs := append([]any(nil), args...)
+	listArgs = append(listArgs, pageSize, (page-1)*pageSize)
+	rows, err := s.db.Query(`SELECT r.id, r.status, COALESCE(r.access_key_name, ''), COALESCE(r.virtual_model, ''), r.inbound_protocol, COALESCE((SELECT a.upstream_protocol FROM attempts a WHERE a.request_id = r.id ORDER BY a.position DESC LIMIT 1), ''), r.stream, r.client_ip, COALESCE(r.user_agent, ''), r.response_status, r.first_content_ms, r.total_ms, r.created_at, r.completed_at FROM requests r WHERE `+where+` ORDER BY r.created_at DESC LIMIT ? OFFSET ?`, listArgs...)
 	if err != nil {
 		return RequestPage{}, err
 	}

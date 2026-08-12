@@ -1,12 +1,13 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Col, Collapse, Descriptions, Drawer, Empty, Input, Pagination, Row, Skeleton, Space, Table, Tabs, Tag, Typography } from 'antd'
+import { Button, Card, Col, Collapse, DatePicker, Descriptions, Drawer, Empty, Input, Pagination, Row, Skeleton, Space, Table, Tabs, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
+import dayjs, { type Dayjs } from 'dayjs'
 import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
 import JsonPayload from '../components/JsonPayload'
 
 const metrics: Array<{ key: keyof Overview; label: string }> = [
-  { key: 'requests_today', label: '今日请求' },
+  { key: 'request_count', label: '请求数' },
   { key: 'access_keys', label: '访问密钥' },
   { key: 'providers', label: '供应商' },
   { key: 'virtual_models', label: '虚拟模型' },
@@ -15,14 +16,30 @@ const metrics: Array<{ key: keyof Overview; label: string }> = [
 export default function OverviewPage({ data, loading }: { data?: Overview; loading: boolean }) {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
+  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(() => {
+    const today = dayjs().startOf('day')
+    return [today, today]
+  })
   const [requestIDInput, setRequestIDInput] = useState('')
   const [requestID, setRequestID] = useState('')
   const [detailID, setDetailID] = useState<string | null>(null)
   const queryClient = useQueryClient()
+  const createdFrom = dateRange[0].startOf('day').toISOString()
+  const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
+  const shouldPoll = dateRange[0].startOf('day').isBefore(dayjs().startOf('day').add(1, 'day')) && dateRange[1].startOf('day').add(1, 'day').isAfter(dayjs().startOf('day'))
   const requests = useQuery({
-    queryKey: ['requests', page, pageSize, requestID],
-    queryFn: () => api<RequestPage>(`/api/admin/requests?page=${page}&page_size=${pageSize}&request_id=${encodeURIComponent(requestID)}`),
-    refetchInterval: 5000,
+    queryKey: ['requests', page, pageSize, requestID, createdFrom, createdTo],
+    queryFn: () => {
+      const params = new URLSearchParams({
+        page: String(page),
+        page_size: String(pageSize),
+        request_id: requestID,
+        created_from: createdFrom,
+        created_to: createdTo,
+      })
+      return api<RequestPage>(`/api/admin/requests?${params}`)
+    },
+    refetchInterval: shouldPoll ? 5000 : false,
   })
   const detail = useQuery({
     queryKey: ['request-detail', detailID],
@@ -40,7 +57,11 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
     <div className="mc-enter mx-auto max-w-[1500px]">
       <div className="mb-6 flex flex-col gap-4 sm:mb-10 lg:flex-row lg:items-end lg:justify-between">
         <Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">使用记录</Typography.Title>
-        <div className="flex w-full gap-2 lg:w-auto"><Input.Search allowClear enterButton="搜索" placeholder="输入请求 ID" className="min-w-0 flex-1 lg:w-[360px]" value={requestIDInput} onChange={(event) => { const value = event.target.value; setRequestIDInput(value); if (!value) { setRequestID(''); setPage(1) } }} onSearch={(value) => { setRequestID(value.trim()); setPage(1) }} /><Button icon={<ReloadOutlined />} loading={requests.isFetching} onClick={refresh}><span className="hidden sm:inline">刷新</span></Button></div>
+        <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+          <DatePicker.RangePicker aria-label="请求时间范围" allowClear={false} format="YYYY-MM-DD" value={dateRange} onChange={(value) => { if (!value?.[0] || !value?.[1]) return; setDateRange([value[0], value[1]]); setPage(1) }} className="w-full sm:w-[260px]" />
+          <Input.Search allowClear enterButton="搜索" placeholder="输入请求 ID" className="min-w-0 flex-1 lg:w-[360px]" value={requestIDInput} onChange={(event) => { const value = event.target.value; setRequestIDInput(value); if (!value) { setRequestID(''); setPage(1) } }} onSearch={(value) => { setRequestID(value.trim()); setPage(1) }} />
+          <Button icon={<ReloadOutlined />} loading={requests.isFetching} onClick={refresh}><span className="hidden sm:inline">刷新</span></Button>
+        </div>
       </div>
       <Row gutter={[12, 12]}>
         {metrics.map((metric, index) => (
@@ -62,7 +83,7 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
           scroll={{ x: 1380, y: 'calc(100vh - 430px)' }}
           onRow={(record) => ({ onClick: () => setDetailID(record.id), className: 'cursor-pointer' })}
           pagination={{ current: page, pageSize, total: requests.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }}
-          locale={{ emptyText: <Empty className="py-14" description={requestID ? '没有匹配该请求 ID 的记录' : '创建访问密钥、供应商和模型路由后，请求记录会出现在这里'} /> }}
+          locale={{ emptyText: <Empty className="py-14" description={requestID ? '没有匹配该请求 ID 的记录' : '所选时间范围内暂无请求记录'} /> }}
           columns={[
             { title: '请求时间', dataIndex: 'created_at', width: 190, render: (value) => new Date(value).toLocaleString() },
             { title: '请求 ID', dataIndex: 'id', width: 180, render: (value) => <code>{value}</code> },
@@ -99,7 +120,7 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
               <Tag color={record.stream ? 'processing' : undefined}>{record.stream ? '流式' : '非流式'}</Tag>
             </Space>
           </Card>
-        )) : <Card><Empty className="py-8" description={requestID ? '没有匹配该请求 ID 的记录' : '暂无请求记录'} /></Card>}
+        )) : <Card><Empty className="py-8" description={requestID ? '没有匹配该请求 ID 的记录' : '所选时间范围内暂无请求记录'} /></Card>}
         {!!requests.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={requests.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={() => setDetailID(null)} />

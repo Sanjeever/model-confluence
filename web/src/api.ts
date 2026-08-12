@@ -36,7 +36,7 @@ export type Overview = {
   access_keys: number
   providers: number
   virtual_models: number
-  requests_today: number
+  request_count: number
 }
 
 export type AccessKey = {

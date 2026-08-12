@@ -136,8 +136,13 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) overview(w http.ResponseWriter, _ *http.Request) {
-	overview, err := h.store.Overview()
+func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
+	createdFrom, createdTo, err := requestTimeRange(r)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	overview, err := h.store.Overview(createdFrom, createdTo)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -154,7 +159,12 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	requests, err := h.store.ListRequests(page, pageSize, strings.TrimSpace(r.URL.Query().Get("request_id")))
+	createdFrom, createdTo, err := requestTimeRange(r)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	requests, err := h.store.ListRequests(page, pageSize, strings.TrimSpace(r.URL.Query().Get("request_id")), createdFrom, createdTo)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -580,6 +590,33 @@ func positiveQuery(w http.ResponseWriter, r *http.Request, name string, fallback
 		value = parsed
 	}
 	return value, true
+}
+
+func requestTimeRange(r *http.Request) (time.Time, time.Time, error) {
+	fromValue := strings.TrimSpace(r.URL.Query().Get("created_from"))
+	toValue := strings.TrimSpace(r.URL.Query().Get("created_to"))
+	if fromValue == "" && toValue == "" {
+		today := time.Now().UTC()
+		from := time.Date(today.Year(), today.Month(), today.Day(), 0, 0, 0, 0, time.UTC)
+		return from, from.AddDate(0, 0, 1), nil
+	}
+	if fromValue == "" || toValue == "" {
+		return time.Time{}, time.Time{}, errors.New("created_from 和 created_to 必须同时提供")
+	}
+	from, err := time.Parse(time.RFC3339Nano, fromValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("created_from 参数无效")
+	}
+	to, err := time.Parse(time.RFC3339Nano, toValue)
+	if err != nil {
+		return time.Time{}, time.Time{}, errors.New("created_to 参数无效")
+	}
+	from = from.UTC()
+	to = to.UTC()
+	if !from.Before(to) {
+		return time.Time{}, time.Time{}, errors.New("created_from 必须早于 created_to")
+	}
+	return from, to, nil
 }
 
 func writeStoreError(w http.ResponseWriter, err error, notFound string) {
