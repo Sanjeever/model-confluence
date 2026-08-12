@@ -31,6 +31,12 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     responses: 'https://api.deepseek.com/v1/responses',
     messages: 'https://api.deepseek.com/anthropic/v1/messages',
   },
+  {
+    name: '百炼按量计费',
+    chat_completions: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
+    responses: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses',
+    messages: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
+  },
 ]
 
 export default function ProvidersPage() {
