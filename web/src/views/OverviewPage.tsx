@@ -14,7 +14,7 @@ const metrics: Array<{ key: keyof Overview; label: string }> = [
   { key: 'virtual_models', label: '虚拟模型' },
 ]
 
-export default function OverviewPage({ data, loading }: { data?: Overview; loading: boolean }) {
+export default function OverviewPage() {
   const [page, setPage] = useState(1)
   const [pageSize, setPageSize] = useState(10)
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(() => {
@@ -28,6 +28,10 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
   const createdFrom = dateRange[0].startOf('day').toISOString()
   const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
   const shouldPoll = dateRange[0].startOf('day').isBefore(dayjs().startOf('day').add(1, 'day')) && dateRange[1].startOf('day').add(1, 'day').isAfter(dayjs().startOf('day'))
+  const overview = useQuery({
+    queryKey: ['overview', createdFrom, createdTo],
+    queryFn: () => api<Overview>(`/api/admin/overview?created_from=${encodeURIComponent(createdFrom)}&created_to=${encodeURIComponent(createdTo)}`),
+  })
   const requests = useQuery({
     queryKey: ['requests', page, pageSize, requestID, createdFrom, createdTo],
     queryFn: () => {
@@ -70,7 +74,7 @@ export default function OverviewPage({ data, loading }: { data?: Overview; loadi
             <Card className="relative overflow-hidden" styles={{ body: { minHeight: 132 } }}>
               <div className="absolute right-0 top-0 h-full w-1 bg-[#d7783d]" style={{ opacity: .25 + index * .15 }} />
               <div className="mb-6 text-sm text-[#7c8d86] sm:mb-8">{metric.label}</div>
-              {loading ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{data?.[metric.key] ?? 0}</div>}
+              {overview.isPending ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{overview.data?.[metric.key] ?? 0}</div>}
             </Card>
           </Col>
         ))}

@@ -17,6 +17,6 @@ SELECT
   (SELECT COUNT(*) FROM providers WHERE archived_at IS NULL),
   (SELECT COUNT(*) FROM virtual_models WHERE archived_at IS NULL),
   (SELECT COUNT(*) FROM requests WHERE created_at >= ? AND created_at < ?)
-`).Scan(&result.AccessKeys, &result.Providers, &result.VirtualModels, &result.RequestCount, formatTime(createdFrom), formatTime(createdTo))
+`, formatTime(createdFrom), formatTime(createdTo)).Scan(&result.AccessKeys, &result.Providers, &result.VirtualModels, &result.RequestCount)
 	return result, err
 }
