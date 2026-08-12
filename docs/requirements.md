@@ -162,9 +162,15 @@ OpenAI 的 system/developer 与 Anthropic 顶层 system 不完全等价。首版
 
 当客户端没有提供最大输出 Token，而目标 Messages 入口要求该值时，使用候选配置的默认值。客户端值超过候选上限时，在调用上游前拒绝。
 
-### 6.2 明确不支持跨协议转换
+### 6.2 图片输入与明确不支持跨协议转换
 
-- 图像、音频、视频和文件输入；
+跨协议请求支持图片输入，三种协议中的图片 URL、data URL 和 base64 图片在规范模型中统一表示，并保留图片与文本的顺序。跨协议不支持供应商私有的 `file_id` 图片引用。
+
+Chat Completions 与 Responses 的 `detail` 支持 `auto`、`low`、`high`；Messages 没有等价字段。转换到 Messages 时，未设置或显式设置为 `auto` 的 detail 可以省略，`low` 和 `high` 必须在上游调用前明确拒绝，不能静默丢弃。
+
+以下能力明确不支持跨协议转换：
+
+- 音频、视频和文件输入；
 - 结构化输出和 JSON Schema 响应格式；
 - provider-hosted web search、file search、computer use、code interpreter、image generation 和远程 MCP；
 - Anthropic thinking/signature、Responses reasoning/encrypted content 和供应商私有 reasoning_content 的跨协议往返；
@@ -424,10 +430,10 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 - 6 个跨协议方向分别通过多轮工具调用；至少一个场景包含两个并行工具调用。
 - Codex 通过 `/v1/responses` 转到 Chat Completions 候选，连续完成至少 3 轮客户端工具调用。
 - Claude Code 通过 `/v1/messages` 转到 Chat Completions 或 Responses 候选，连续完成至少 3 轮客户端工具调用。
-- 不支持字段、状态会话、多模态和思考块在上游调用前返回明确错误。
+- 不支持字段、状态会话、未支持的多模态字段和思考块在上游调用前返回明确错误；URL、data URL 和 base64 图片输入除外。
 - 同协议未知字段可以透传，跨协议未知非空字段被拒绝。
 
-“支持 Codex/Claude Code”表示配置网关地址、访问密钥、虚拟模型和少量明确兼容设置后，文本、流式和工具核心代理循环可用；不承诺主动开启多模态、跨协议思考块、状态会话或托管工具后仍然可用。
+“支持 Codex/Claude Code”表示配置网关地址、访问密钥、虚拟模型和少量明确兼容设置后，文本、图片输入、流式和工具核心代理循环可用；不承诺主动开启音频、视频、文件、跨协议思考块、状态会话或托管工具后仍然可用。
 
 ### 16.4 路由与故障
 

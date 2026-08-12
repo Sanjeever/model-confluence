@@ -94,7 +94,8 @@ func decodeChatRequest(body []byte) (Request, error) {
 		return Request{}, err
 	}
 	seenConversation := false
-	for _, message := range messages {
+	for index, message := range messages {
+		path := fmt.Sprintf("messages[%d]", index)
 		if message.Role == "system" || message.Role == "developer" {
 			if seenConversation {
 				return Request{}, errors.New("system/developer messages are only supported before conversation messages")
@@ -120,13 +121,11 @@ func decodeChatRequest(body []byte) (Request, error) {
 		}
 		canonical := Message{Role: message.Role}
 		if len(message.Content) > 0 && !bytes.Equal(message.Content, []byte("null")) {
-			text, err := decodeTextContent(message.Content)
+			blocks, err := decodeChatContentBlocks(message.Content, path+".content")
 			if err != nil {
 				return Request{}, err
 			}
-			if text != "" {
-				canonical.Blocks = append(canonical.Blocks, Block{Type: "text", Text: text})
-			}
+			canonical.Blocks = append(canonical.Blocks, blocks...)
 		}
 		for _, call := range message.ToolCalls {
 			if call.Type != "" && call.Type != "function" {
@@ -194,10 +193,11 @@ func decodeResponsesRequest(body []byte) (Request, error) {
 		if err := json.Unmarshal(source.Input, &items); err != nil {
 			return Request{}, err
 		}
-		for _, item := range items {
+		for index, item := range items {
 			var itemType, role string
 			_ = json.Unmarshal(item["type"], &itemType)
 			_ = json.Unmarshal(item["role"], &role)
+			path := fmt.Sprintf("input[%d]", index)
 			switch itemType {
 			case "", "message":
 				if role == "system" || role == "developer" {
@@ -211,11 +211,23 @@ func decodeResponsesRequest(body []byte) (Request, error) {
 				if role != "user" && role != "assistant" {
 					return Request{}, fmt.Errorf("unsupported Responses role %q", role)
 				}
-				text, err := decodeResponsesContent(item["content"])
+				blocks, err := decodeResponsesContentBlocks(item["content"], path+".content")
 				if err != nil {
 					return Request{}, err
 				}
-				request.Messages = append(request.Messages, Message{Role: role, Blocks: []Block{{Type: "text", Text: text}}})
+				request.Messages = append(request.Messages, Message{Role: role, Blocks: blocks})
+			case "input_text":
+				var text string
+				if err := json.Unmarshal(item["text"], &text); err != nil {
+					return Request{}, fmt.Errorf("%s.text: %w", path, err)
+				}
+				appendBlock(&request.Messages, "user", Block{Type: "text", Text: text})
+			case "input_image":
+				image, err := decodeResponsesImage(item, path)
+				if err != nil {
+					return Request{}, err
+				}
+				appendBlock(&request.Messages, "user", Block{Type: "image", Image: &image})
 			case "function_call":
 				var callID, name string
 				var arguments json.RawMessage
@@ -280,56 +292,13 @@ func decodeMessagesRequest(body []byte) (Request, error) {
 	if err := json.Unmarshal(source.Messages, &messages); err != nil {
 		return Request{}, err
 	}
-	for _, message := range messages {
+	for index, message := range messages {
 		if message.Role != "user" && message.Role != "assistant" && message.Role != "system" {
 			return Request{}, fmt.Errorf("unsupported Messages role %q", message.Role)
 		}
-		canonical := Message{Role: message.Role}
-		if message.Content[0] == '"' {
-			var text string
-			if err := json.Unmarshal(message.Content, &text); err != nil {
-				return Request{}, err
-			}
-			canonical.Blocks = append(canonical.Blocks, Block{Type: "text", Text: text})
-		} else {
-			var blocks []map[string]json.RawMessage
-			if err := json.Unmarshal(message.Content, &blocks); err != nil {
-				return Request{}, err
-			}
-			for _, block := range blocks {
-				var blockType string
-				_ = json.Unmarshal(block["type"], &blockType)
-				switch blockType {
-				case "text":
-					var text string
-					_ = json.Unmarshal(block["text"], &text)
-					canonical.Blocks = append(canonical.Blocks, Block{Type: "text", Text: text})
-				case "tool_use":
-					var id, name string
-					_ = json.Unmarshal(block["id"], &id)
-					_ = json.Unmarshal(block["name"], &name)
-					canonical.Blocks = append(canonical.Blocks, Block{Type: "tool_call", ToolCall: &ToolCall{ID: id, Name: name, Arguments: normalizeArguments(block["input"])}})
-				case "tool_result":
-					var callID string
-					var isError bool
-					_ = json.Unmarshal(block["tool_use_id"], &callID)
-					_ = json.Unmarshal(block["is_error"], &isError)
-					text, err := decodeAnthropicContent(block["content"], false)
-					if err != nil {
-						return Request{}, err
-					}
-					canonical.Blocks = append(canonical.Blocks, Block{Type: "tool_result", ToolResult: &ToolResult{CallID: callID, Content: text, IsError: isError}})
-				case "thinking":
-					var thinking string
-					_ = json.Unmarshal(block["thinking"], &thinking)
-					if thinking != "" {
-						canonical.Blocks = append(canonical.Blocks, Block{Type: "reasoning", Text: thinking})
-					}
-				case "redacted_thinking":
-				default:
-					return Request{}, fmt.Errorf("unsupported Messages content block %q", blockType)
-				}
-			}
+		canonical, err := decodeMessagesContent(message.Role, message.Content, fmt.Sprintf("messages[%d].content", index))
+		if err != nil {
+			return Request{}, err
 		}
 		request.Messages = append(request.Messages, canonical)
 	}
@@ -345,24 +314,26 @@ func encodeChatRequest(request Request) ([]byte, error) {
 	if len(request.Instructions) > 0 {
 		messages = append(messages, map[string]any{"role": "system", "content": strings.Join(request.Instructions, "\n\n")})
 	}
-	for _, message := range request.Messages {
-		textParts := make([]string, 0)
+	for messageIndex, message := range request.Messages {
+		content, err := encodeChatContent(message.Blocks, fmt.Sprintf("messages[%d].content", messageIndex))
+		if err != nil {
+			return nil, err
+		}
 		reasoningParts := make([]string, 0)
 		toolCalls := make([]any, 0)
 		for _, block := range message.Blocks {
-			switch block.Type {
-			case "text":
-				textParts = append(textParts, block.Text)
-			case "reasoning":
+			if block.Type == "reasoning" {
 				reasoningParts = append(reasoningParts, block.Text)
-			case "tool_call":
+			}
+			if block.Type == "tool_call" {
 				toolCalls = append(toolCalls, map[string]any{"id": block.ToolCall.ID, "type": "function", "function": map[string]any{"name": block.ToolCall.Name, "arguments": string(block.ToolCall.Arguments)}})
-			case "tool_result":
+			}
+			if block.Type == "tool_result" {
 				messages = append(messages, map[string]any{"role": "tool", "tool_call_id": block.ToolResult.CallID, "content": block.ToolResult.Content})
 			}
 		}
-		if len(textParts) > 0 || len(reasoningParts) > 0 || len(toolCalls) > 0 {
-			value := map[string]any{"role": message.Role, "content": strings.Join(textParts, "")}
+		if content != nil || len(reasoningParts) > 0 || len(toolCalls) > 0 {
+			value := map[string]any{"role": message.Role, "content": content}
 			if len(reasoningParts) > 0 {
 				value["reasoning_content"] = strings.Join(reasoningParts, "")
 			}
@@ -400,20 +371,21 @@ func encodeChatRequest(request Request) ([]byte, error) {
 
 func encodeResponsesRequest(request Request) ([]byte, error) {
 	input := make([]any, 0, len(request.Messages)*2)
-	for _, message := range request.Messages {
-		var text strings.Builder
+	for messageIndex, message := range request.Messages {
+		content, err := encodeResponsesContent(message.Blocks, message.Role, fmt.Sprintf("input[%d].content", messageIndex))
+		if err != nil {
+			return nil, err
+		}
 		for _, block := range message.Blocks {
-			switch block.Type {
-			case "text":
-				text.WriteString(block.Text)
-			case "tool_call":
+			if block.Type == "tool_call" {
 				input = append(input, map[string]any{"type": "function_call", "call_id": block.ToolCall.ID, "name": block.ToolCall.Name, "arguments": string(block.ToolCall.Arguments)})
-			case "tool_result":
+			}
+			if block.Type == "tool_result" {
 				input = append(input, map[string]any{"type": "function_call_output", "call_id": block.ToolResult.CallID, "output": block.ToolResult.Content})
 			}
 		}
-		if text.Len() > 0 {
-			input = append(input, map[string]any{"type": "message", "role": message.Role, "content": text.String()})
+		if content != nil {
+			input = append(input, map[string]any{"type": "message", "role": message.Role, "content": content})
 		}
 	}
 	result := map[string]any{"model": request.Model, "input": input, "stream": request.Stream, "store": false}
@@ -447,12 +419,18 @@ func encodeResponsesRequest(request Request) ([]byte, error) {
 
 func encodeMessagesRequest(request Request) ([]byte, error) {
 	messages := make([]any, 0, len(request.Messages))
-	for _, message := range request.Messages {
+	for messageIndex, message := range request.Messages {
 		content := make([]any, 0, len(message.Blocks))
-		for _, block := range message.Blocks {
+		for blockIndex, block := range message.Blocks {
 			switch block.Type {
 			case "text":
 				content = append(content, map[string]any{"type": "text", "text": block.Text})
+			case "image":
+				image, err := encodeImage(block.Image, Messages, fmt.Sprintf("messages[%d].content[%d]", messageIndex, blockIndex))
+				if err != nil {
+					return nil, err
+				}
+				content = append(content, image)
 			case "tool_call":
 				content = append(content, map[string]any{"type": "tool_use", "id": block.ToolCall.ID, "name": block.ToolCall.Name, "input": rawOrObject(block.ToolCall.Arguments)})
 			case "tool_result":
@@ -488,6 +466,240 @@ func encodeMessagesRequest(request Request) ([]byte, error) {
 		result["output_config"] = map[string]any{"effort": request.Effort}
 	}
 	return json.Marshal(result)
+}
+
+func decodeChatContentBlocks(raw json.RawMessage, path string) ([]Block, error) {
+	value := bytes.TrimSpace(raw)
+	if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+		return nil, nil
+	}
+	if value[0] == '"' {
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		return []Block{{Type: "text", Text: text}}, nil
+	}
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(value, &blocks); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	result := make([]Block, 0, len(blocks))
+	for index, block := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		var blockType string
+		if err := json.Unmarshal(block["type"], &blockType); err != nil {
+			return nil, fmt.Errorf("%s.type: %w", blockPath, err)
+		}
+		switch blockType {
+		case "text":
+			var text string
+			if err := json.Unmarshal(block["text"], &text); err != nil {
+				return nil, fmt.Errorf("%s.text: %w", blockPath, err)
+			}
+			result = append(result, Block{Type: "text", Text: text})
+		case "image_url":
+			image, err := decodeChatImage(block["image_url"], blockPath+".image_url")
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, Block{Type: "image", Image: &image})
+		default:
+			return nil, fmt.Errorf("unsupported Chat content block %q at %s.type", blockType, blockPath)
+		}
+	}
+	return result, nil
+}
+
+func decodeResponsesContentBlocks(raw json.RawMessage, path string) ([]Block, error) {
+	value := bytes.TrimSpace(raw)
+	if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+		return nil, nil
+	}
+	if value[0] == '"' {
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			return nil, fmt.Errorf("%s: %w", path, err)
+		}
+		return []Block{{Type: "text", Text: text}}, nil
+	}
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(value, &blocks); err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	result := make([]Block, 0, len(blocks))
+	for index, block := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		var blockType string
+		if err := json.Unmarshal(block["type"], &blockType); err != nil {
+			return nil, fmt.Errorf("%s.type: %w", blockPath, err)
+		}
+		switch blockType {
+		case "input_text", "output_text", "text":
+			var text string
+			if err := json.Unmarshal(block["text"], &text); err != nil {
+				return nil, fmt.Errorf("%s.text: %w", blockPath, err)
+			}
+			result = append(result, Block{Type: "text", Text: text})
+		case "input_image":
+			image, err := decodeResponsesImage(block, blockPath)
+			if err != nil {
+				return nil, err
+			}
+			result = append(result, Block{Type: "image", Image: &image})
+		default:
+			return nil, fmt.Errorf("unsupported Responses content block %q at %s.type", blockType, blockPath)
+		}
+	}
+	return result, nil
+}
+
+func decodeMessagesContent(role string, raw json.RawMessage, path string) (Message, error) {
+	value := bytes.TrimSpace(raw)
+	message := Message{Role: role}
+	if len(value) == 0 || bytes.Equal(value, []byte("null")) {
+		return message, nil
+	}
+	if value[0] == '"' {
+		var text string
+		if err := json.Unmarshal(value, &text); err != nil {
+			return Message{}, fmt.Errorf("%s: %w", path, err)
+		}
+		message.Blocks = append(message.Blocks, Block{Type: "text", Text: text})
+		return message, nil
+	}
+	var blocks []map[string]json.RawMessage
+	if err := json.Unmarshal(value, &blocks); err != nil {
+		return Message{}, fmt.Errorf("%s: %w", path, err)
+	}
+	for index, block := range blocks {
+		blockPath := fmt.Sprintf("%s[%d]", path, index)
+		var blockType string
+		if err := json.Unmarshal(block["type"], &blockType); err != nil {
+			return Message{}, fmt.Errorf("%s.type: %w", blockPath, err)
+		}
+		switch blockType {
+		case "text":
+			var text string
+			if err := json.Unmarshal(block["text"], &text); err != nil {
+				return Message{}, fmt.Errorf("%s.text: %w", blockPath, err)
+			}
+			message.Blocks = append(message.Blocks, Block{Type: "text", Text: text})
+		case "image":
+			image, err := decodeMessagesImage(block["source"], blockPath+".source")
+			if err != nil {
+				return Message{}, err
+			}
+			message.Blocks = append(message.Blocks, Block{Type: "image", Image: &image})
+		case "tool_use":
+			var id, name string
+			_ = json.Unmarshal(block["id"], &id)
+			_ = json.Unmarshal(block["name"], &name)
+			message.Blocks = append(message.Blocks, Block{Type: "tool_call", ToolCall: &ToolCall{ID: id, Name: name, Arguments: normalizeArguments(block["input"])}})
+		case "tool_result":
+			var callID string
+			var isError bool
+			_ = json.Unmarshal(block["tool_use_id"], &callID)
+			_ = json.Unmarshal(block["is_error"], &isError)
+			text, err := decodeAnthropicContent(block["content"], false)
+			if err != nil {
+				return Message{}, err
+			}
+			message.Blocks = append(message.Blocks, Block{Type: "tool_result", ToolResult: &ToolResult{CallID: callID, Content: text, IsError: isError}})
+		case "thinking":
+			var thinking string
+			_ = json.Unmarshal(block["thinking"], &thinking)
+			if thinking != "" {
+				message.Blocks = append(message.Blocks, Block{Type: "reasoning", Text: thinking})
+			}
+		case "redacted_thinking":
+		default:
+			return Message{}, fmt.Errorf("unsupported Messages content block %q", blockType)
+		}
+	}
+	return message, nil
+}
+
+func encodeChatContent(blocks []Block, path string) (any, error) {
+	var text strings.Builder
+	parts := make([]any, 0, len(blocks))
+	hasImage := false
+	for index, block := range blocks {
+		switch block.Type {
+		case "text":
+			if block.Text == "" {
+				continue
+			}
+			if hasImage {
+				parts = append(parts, map[string]any{"type": "text", "text": block.Text})
+			} else {
+				text.WriteString(block.Text)
+			}
+		case "image":
+			if !hasImage {
+				if text.Len() > 0 {
+					parts = append(parts, map[string]any{"type": "text", "text": text.String()})
+					text.Reset()
+				}
+				hasImage = true
+			}
+			image, err := encodeImage(block.Image, Chat, fmt.Sprintf("%s[%d]", path, index))
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, image)
+		}
+	}
+	if !hasImage {
+		if text.Len() == 0 {
+			return nil, nil
+		}
+		return text.String(), nil
+	}
+	return parts, nil
+}
+
+func encodeResponsesContent(blocks []Block, role, path string) (any, error) {
+	var text strings.Builder
+	parts := make([]any, 0, len(blocks))
+	hasImage := false
+	textType := "input_text"
+	if role == "assistant" {
+		textType = "output_text"
+	}
+	for index, block := range blocks {
+		switch block.Type {
+		case "text":
+			if block.Text == "" {
+				continue
+			}
+			if hasImage {
+				parts = append(parts, map[string]any{"type": textType, "text": block.Text})
+			} else {
+				text.WriteString(block.Text)
+			}
+		case "image":
+			if !hasImage {
+				if text.Len() > 0 {
+					parts = append(parts, map[string]any{"type": textType, "text": text.String()})
+					text.Reset()
+				}
+				hasImage = true
+			}
+			image, err := encodeImage(block.Image, Responses, fmt.Sprintf("%s[%d]", path, index))
+			if err != nil {
+				return nil, err
+			}
+			parts = append(parts, image)
+		}
+	}
+	if !hasImage {
+		if text.Len() == 0 {
+			return nil, nil
+		}
+		return text.String(), nil
+	}
+	return parts, nil
 }
 
 func applyCommonRequestFields(result map[string]any, request Request, maxField string) {

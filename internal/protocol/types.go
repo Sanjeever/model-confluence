@@ -28,9 +28,31 @@ type Message struct {
 	Blocks []Block
 }
 
+type ImageSourceKind string
+
+const (
+	ImageURL    ImageSourceKind = "url"
+	ImageBase64 ImageSourceKind = "base64"
+	ImageFileID ImageSourceKind = "file_id"
+)
+
+type ImageSource struct {
+	Kind      ImageSourceKind
+	URL       string
+	MediaType string
+	Data      string
+	FileID    string
+}
+
+type Image struct {
+	Source ImageSource
+	Detail *string
+}
+
 type Block struct {
 	Type       string
 	Text       string
+	Image      *Image
 	ToolCall   *ToolCall
 	ToolResult *ToolResult
 }
