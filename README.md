@@ -199,17 +199,17 @@ x-api-key: mc_...
 
 ## 构建单文件版本
 
-先构建前端，再构建 Go 可执行文件：
+先构建前端，再使用 `embedded_ui` 标签构建 Go 可执行文件：
 
 ```powershell
 cd web
 pnpm install --frozen-lockfile
 pnpm build
 cd ..
-go build -o model-confluence.exe ./cmd/model-confluence
+go build -tags embedded_ui -o model-confluence.exe ./cmd/model-confluence
 ```
 
-`pnpm build` 会把前端产物写入 `internal/webui/dist`，Go 的 `embed` 会将这些文件打包进最终可执行文件。运行正式版本不需要 Node.js：
+`pnpm build` 会把前端产物写入 `internal/webui/dist`，带 `embedded_ui` 标签的 Go 构建会将这些文件打包进最终可执行文件。运行正式版本不需要 Node.js：
 
 ```powershell
 $env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
@@ -285,7 +285,7 @@ docs/requirements.md    首版产品需求与设计边界
 ## 开发说明
 
 - 修改 Go 文件后使用 `gofmt` 格式化。
-- 修改前端源码时不要直接编辑 `internal/webui/dist`；正式构建前运行 `pnpm build` 生成。
+- 修改前端源码时不要直接编辑 `internal/webui/dist`；正式构建前运行 `pnpm build` 生成。普通 `go run` 和 `go test` 不依赖该目录，前端本地开发直接运行 `pnpm dev` 即可。
 - 新增数据库字段时既要更新建库 schema，也要为已有数据库补充兼容迁移。
 - 协议转换应保持请求与响应对称，尤其要覆盖流式事件、工具调用和多轮 reasoning/thinking 回传。
 - 项目提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/)。

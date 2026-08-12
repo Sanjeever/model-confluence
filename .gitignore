@@ -4,6 +4,7 @@
 
 # Frontend
 /web/node_modules/
+/internal/webui/dist/
 *.tsbuildinfo
 /web/vite.config.js
 /web/vite.config.d.ts

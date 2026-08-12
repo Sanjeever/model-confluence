@@ -19,7 +19,7 @@ COPY internal ./internal
 COPY --from=web /src/internal/webui/dist ./internal/webui/dist
 RUN mkdir -p /out/data && \
     CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
-    go build -trimpath -ldflags="-s -w" -o /out/model-confluence ./cmd/model-confluence
+    go build -tags embedded_ui -trimpath -ldflags="-s -w" -o /out/model-confluence ./cmd/model-confluence
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build --chown=65532:65532 /out/model-confluence /model-confluence
