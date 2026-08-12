@@ -436,6 +436,10 @@ func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, bod
 		h.store.MarkUpstreamKey(route.Key.ID, "auth_invalid", string(body), nil)
 		return
 	}
+	if status == http.StatusPaymentRequired {
+		h.store.MarkUpstreamKey(route.Key.ID, "quota_exhausted", extractErrorCode(body), nil)
+		return
+	}
 	if status != http.StatusTooManyRequests {
 		return
 	}
@@ -638,7 +642,7 @@ func contains(values []string, target string) bool {
 }
 
 func shouldTryNextKey(status int) bool {
-	return status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusTooManyRequests
+	return status == http.StatusUnauthorized || status == http.StatusForbidden || status == http.StatusPaymentRequired || status == http.StatusTooManyRequests
 }
 
 func skipCandidate(routes []store.ResolvedRoute, index int, candidateID int64) int {

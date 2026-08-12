@@ -5,11 +5,13 @@ import (
 	"bytes"
 	"context"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/protocol"
+	"github.com/Sanjeever/model-confluence/internal/store"
 )
 
 type recordingResponseWriter struct {
@@ -55,5 +57,48 @@ func TestProxyConvertedEventsDelaysCommitBeforeConversionError(t *testing.T) {
 	}
 	if clientLog.Len() != 0 {
 		t.Fatalf("client received partial stream: %s", clientLog.Bytes())
+	}
+}
+
+func TestShouldTryNextKeyOnPaymentRequired(t *testing.T) {
+	if !shouldTryNextKey(http.StatusPaymentRequired) {
+		t.Fatal("402 should try the next upstream route")
+	}
+}
+
+func TestUpdateKeyAfterPaymentRequiredMarksQuota(t *testing.T) {
+	database, err := store.Open(filepath.Join(t.TempDir(), "model-confluence.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer database.Close()
+
+	_, err = database.CreateProvider(store.CreateProviderInput{
+		Name:      "DeepSeek",
+		AuthType:  "bearer",
+		Endpoints: map[string]string{protocol.Chat: "https://example.test/chat/completions"},
+		Keys:      []store.CreateUpstreamKeyInput{{Name: "primary", Secret: "test-secret"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, err := database.ListProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	h := &Handler{store: database}
+	route := store.ResolvedRoute{Provider: providers[0], Key: providers[0].Keys[0]}
+	h.updateKeyAfterError(route, http.StatusPaymentRequired, []byte(`{"error":{"type":"unknown_error","code":"invalid_request_error"}}`), nil)
+	providers, err = database.ListProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := providers[0].Keys[0]
+	if key.RuntimeStatus != "quota_exhausted" {
+		t.Fatalf("unexpected key status: %q", key.RuntimeStatus)
+	}
+	if key.RuntimeReason != "invalid_request_error" {
+		t.Fatalf("unexpected key reason: %q", key.RuntimeReason)
 	}
 }
