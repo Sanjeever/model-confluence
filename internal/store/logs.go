@@ -3,6 +3,8 @@ package store
 import (
 	"database/sql"
 	"time"
+
+	"github.com/Sanjeever/model-confluence/internal/protocol"
 )
 
 type RequestStart struct {
@@ -123,43 +125,45 @@ type RequestPage struct {
 
 type RequestDetail struct {
 	RequestSummary
-	InboundEndpoint  string          `json:"inbound_endpoint"`
-	ReasoningEffort  string          `json:"reasoning_effort"`
-	RequestHeaders   string          `json:"request_headers"`
-	RequestBody      string          `json:"request_body"`
-	ResponseHeaders  string          `json:"response_headers"`
-	ResponseBody     string          `json:"response_body"`
-	InputTokens      *int64          `json:"input_tokens"`
-	CacheReadTokens  *int64          `json:"cache_read_tokens"`
-	CacheWriteTokens *int64          `json:"cache_write_tokens"`
-	OutputTokens     *int64          `json:"output_tokens"`
-	ReasoningTokens  *int64          `json:"reasoning_tokens"`
-	TotalTokens      *int64          `json:"total_tokens"`
-	ErrorMessage     string          `json:"error_message"`
-	Attempts         []AttemptDetail `json:"attempts"`
+	InboundEndpoint  string                  `json:"inbound_endpoint"`
+	ReasoningEffort  string                  `json:"reasoning_effort"`
+	RequestHeaders   string                  `json:"request_headers"`
+	RequestBody      string                  `json:"request_body"`
+	ResponseHeaders  string                  `json:"response_headers"`
+	ResponseBody     string                  `json:"response_body"`
+	ResponseSummary  *protocol.StreamSummary `json:"response_summary,omitempty"`
+	InputTokens      *int64                  `json:"input_tokens"`
+	CacheReadTokens  *int64                  `json:"cache_read_tokens"`
+	CacheWriteTokens *int64                  `json:"cache_write_tokens"`
+	OutputTokens     *int64                  `json:"output_tokens"`
+	ReasoningTokens  *int64                  `json:"reasoning_tokens"`
+	TotalTokens      *int64                  `json:"total_tokens"`
+	ErrorMessage     string                  `json:"error_message"`
+	Attempts         []AttemptDetail         `json:"attempts"`
 }
 
 type AttemptDetail struct {
-	ID               int64      `json:"id"`
-	Position         int        `json:"position"`
-	ProviderName     string     `json:"provider_name"`
-	UpstreamKeyName  string     `json:"upstream_key_name"`
-	UpstreamModel    string     `json:"upstream_model"`
-	UpstreamProtocol string     `json:"upstream_protocol"`
-	UpstreamEndpoint string     `json:"upstream_endpoint"`
-	Status           string     `json:"status"`
-	RequestHeaders   string     `json:"request_headers"`
-	RequestBody      string     `json:"request_body"`
-	ResponseStatus   *int       `json:"response_status"`
-	ResponseHeaders  string     `json:"response_headers"`
-	ResponseBody     string     `json:"response_body"`
-	RawUsageJSON     string     `json:"raw_usage_json"`
-	FirstByteMS      *int64     `json:"first_byte_ms"`
-	FirstContentMS   *int64     `json:"first_content_ms"`
-	TotalMS          *int64     `json:"total_ms"`
-	ErrorMessage     string     `json:"error_message"`
-	CreatedAt        time.Time  `json:"created_at"`
-	CompletedAt      *time.Time `json:"completed_at"`
+	ID               int64                   `json:"id"`
+	Position         int                     `json:"position"`
+	ProviderName     string                  `json:"provider_name"`
+	UpstreamKeyName  string                  `json:"upstream_key_name"`
+	UpstreamModel    string                  `json:"upstream_model"`
+	UpstreamProtocol string                  `json:"upstream_protocol"`
+	UpstreamEndpoint string                  `json:"upstream_endpoint"`
+	Status           string                  `json:"status"`
+	RequestHeaders   string                  `json:"request_headers"`
+	RequestBody      string                  `json:"request_body"`
+	ResponseStatus   *int                    `json:"response_status"`
+	ResponseHeaders  string                  `json:"response_headers"`
+	ResponseBody     string                  `json:"response_body"`
+	ResponseSummary  *protocol.StreamSummary `json:"response_summary,omitempty"`
+	RawUsageJSON     string                  `json:"raw_usage_json"`
+	FirstByteMS      *int64                  `json:"first_byte_ms"`
+	FirstContentMS   *int64                  `json:"first_content_ms"`
+	TotalMS          *int64                  `json:"total_ms"`
+	ErrorMessage     string                  `json:"error_message"`
+	CreatedAt        time.Time               `json:"created_at"`
+	CompletedAt      *time.Time              `json:"completed_at"`
 }
 
 func (s *Store) ListRequests(page, pageSize int, requestID string, createdFrom, createdTo time.Time) (RequestPage, error) {

@@ -65,6 +65,8 @@ button, input { font: inherit; }
 .mc-json-null { color: #9b5470; }
 .mc-json-value { color: #25312d; }
 
+.mc-stream-tabs .ant-tabs-nav { padding-inline: 16px; }
+
 :root[data-theme="dark"] .mc-json-tree,
 :root[data-theme="dark"] .mc-json-value { color: #d9e1dc; }
 :root[data-theme="dark"] .mc-json-label,

@@ -5,6 +5,7 @@ import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icon
 import dayjs, { type Dayjs } from 'dayjs'
 import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
 import JsonPayload from '../components/JsonPayload'
+import StreamResponseViewer from '../components/StreamResponseViewer'
 
 const metrics: Array<{ key: keyof Overview; label: string }> = [
   { key: 'request_count', label: '请求数' },
@@ -149,7 +150,7 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
         ]} />
         <Tabs items={[
           { key: 'inbound', label: '入站请求', children: <PayloadPair headers={detail.request_headers} body={detail.request_body} reveal={reveal} /> },
-          { key: 'response', label: '客户端响应', children: <PayloadPair headerLabel="响应头" headers={detail.response_headers} body={detail.response_body} reveal={reveal} /> },
+          { key: 'response', label: '客户端响应', children: <PayloadPair headerLabel="响应头" headers={detail.response_headers} body={detail.response_body} reveal={reveal} stream={detail.stream} summary={detail.response_summary} /> },
           { key: 'attempts', label: `上游尝试 ${detail.attempts.length}`, children: detail.attempts.length ? <Collapse items={detail.attempts.map((attempt) => ({
             key: attempt.id,
             label: <Space wrap><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code className="break-all">{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag></Space>,
@@ -158,7 +159,7 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
               { key: 'key', label: '上游密钥', children: attempt.upstream_key_name || '未命名' },
               { key: 'status', label: '响应状态', children: attempt.response_status ?? '—' },
               { key: 'latency', label: '总耗时', children: attempt.total_ms == null ? '—' : `${attempt.total_ms} ms` },
-            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
+            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} stream={detail.stream} summary={attempt.response_summary} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
           }))} /> : <Empty className="py-16" description="该请求在调用上游前失败，没有产生上游尝试" /> },
         ]} />
       </>}
@@ -166,12 +167,12 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
   )
 }
 
-function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal }: { title?: string; headerLabel?: string; headers: string; body: string; reveal: boolean }) {
+function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal, stream = false, summary }: { title?: string; headerLabel?: string; headers: string; body: string; reveal: boolean; stream?: boolean; summary?: RequestDetail['response_summary'] }) {
   return <div>
     {title && <div className="mc-eyebrow mb-3 text-[#7c8d86]">{title}</div>}
     <Collapse size="small" className="mb-5" items={[{ key: 'headers', label: headerLabel, children: <JsonPayload value={reveal ? headers : maskHeaders(headers)} /> }]} />
     <div className="mb-2 text-xs font-medium text-[#7c8d86]">正文</div>
-    <JsonPayload value={body} />
+    {stream ? <StreamResponseViewer body={body} summary={summary} /> : <JsonPayload value={body} />}
   </div>
 }
 

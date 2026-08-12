@@ -200,7 +200,18 @@ func (h *Handler) requestDetail(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+	if detail.Stream {
+		detail.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(detail.ResponseBody), detail.InboundProtocol))
+		for index := range detail.Attempts {
+			attempt := &detail.Attempts[index]
+			attempt.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(attempt.ResponseBody), attempt.UpstreamProtocol))
+		}
+	}
 	httpx.WriteJSON(w, http.StatusOK, detail)
+}
+
+func summaryPointer(value protocol.StreamSummary) *protocol.StreamSummary {
+	return &value
 }
 
 func toInt64Pointer(value *int) *int64 {

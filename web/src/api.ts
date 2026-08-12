@@ -128,6 +128,25 @@ export type RequestSummary = {
   completed_at: string | null
 }
 
+export type StreamSummaryBlock = {
+  type: 'text' | 'reasoning' | 'tool_call'
+  index: number
+  content?: string
+  call_id?: string
+  name?: string
+  arguments?: string
+  arguments_valid: boolean
+  complete: boolean
+}
+
+export type StreamSummary = {
+  parse_status: 'ok' | 'partial' | 'unavailable'
+  completed: boolean
+  stop_reason: string | null
+  blocks: StreamSummaryBlock[]
+  warnings: string[]
+}
+
 export type RequestPage = {
   items: RequestSummary[]
   total: number
@@ -149,6 +168,7 @@ export type AttemptDetail = {
   response_status: number | null
   response_headers: string
   response_body: string
+  response_summary?: StreamSummary
   raw_usage_json: string
   first_byte_ms: number | null
   first_content_ms: number | null
@@ -165,6 +185,7 @@ export type RequestDetail = RequestSummary & {
   request_body: string
   response_headers: string
   response_body: string
+  response_summary?: StreamSummary
   input_tokens: number | null
   cache_read_tokens: number | null
   cache_write_tokens: number | null
