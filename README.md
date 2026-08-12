@@ -239,6 +239,7 @@ git push origin v1.1.0
 | `--response-header-timeout` | — | `5m` | 等待上游响应头超时 |
 | `--stream-idle-timeout` | — | `5m` | 上游流式空闲超时 |
 | `--max-request-bytes` | — | `67108864` | 入站请求体大小上限 |
+| `--log-retention-days` | `MODEL_CONFLUENCE_LOG_RETENTION_DAYS` | `0` | 完整日志载荷保留天数；`0` 表示永久保留，过期后保留结构化元数据 |
 
 健康检查：
 
@@ -259,7 +260,7 @@ go run ./cmd/model-confluence admin reset-password --data-dir ./data
 
 默认数据库路径是 `data/model-confluence.db`，同目录还可能出现 SQLite WAL 文件。
 
-为满足本地排查和审计需求，当前版本会在 SQLite 中明文保存访问密钥、供应商密钥、请求头、请求体和响应体；管理后台也允许管理员查看完整密钥。请将数据目录视为高敏感数据：
+为满足本地排查和审计需求，当前版本会在 SQLite 中保存访问密钥、供应商密钥、请求头、请求体和响应体；新写入的较大请求/响应体会使用 gzip 压缩，配置日志保留天数后会清空过期载荷但保留结构化元数据。管理后台也允许管理员查看完整密钥。请将数据目录视为高敏感数据：
 
 - 只允许受信任的系统用户读取数据目录。
 - 公网部署时应放在 Caddy、Nginx 等 HTTPS 反向代理之后。

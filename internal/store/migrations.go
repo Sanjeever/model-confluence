@@ -127,9 +127,11 @@ CREATE TABLE IF NOT EXISTS requests (
     user_agent TEXT,
     request_headers TEXT NOT NULL,
     request_body BLOB NOT NULL,
+    request_body_encoding TEXT NOT NULL DEFAULT 'identity',
     response_status INTEGER,
     response_headers TEXT,
     response_body BLOB,
+    response_body_encoding TEXT NOT NULL DEFAULT 'identity',
     input_tokens INTEGER,
     cache_read_tokens INTEGER,
     cache_write_tokens INTEGER,
@@ -140,7 +142,8 @@ CREATE TABLE IF NOT EXISTS requests (
     total_ms INTEGER,
     error_message TEXT,
     created_at TEXT NOT NULL,
-    completed_at TEXT
+    completed_at TEXT,
+    payload_pruned_at TEXT
 );
 
 CREATE TABLE IF NOT EXISTS attempts (
@@ -158,9 +161,11 @@ CREATE TABLE IF NOT EXISTS attempts (
     status TEXT NOT NULL,
     request_headers TEXT,
     request_body BLOB,
+    request_body_encoding TEXT NOT NULL DEFAULT 'identity',
     response_status INTEGER,
     response_headers TEXT,
     response_body BLOB,
+    response_body_encoding TEXT NOT NULL DEFAULT 'identity',
     raw_usage_json TEXT,
     first_byte_ms INTEGER,
     first_content_ms INTEGER,
@@ -168,6 +173,7 @@ CREATE TABLE IF NOT EXISTS attempts (
     error_message TEXT,
     created_at TEXT NOT NULL,
     completed_at TEXT,
+    payload_pruned_at TEXT,
     UNIQUE(request_id, position)
 );
 

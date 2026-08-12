@@ -62,6 +62,9 @@ func (s *Store) migrate() error {
 	if err := ensureRequestStreamColumn(tx); err != nil {
 		return fmt.Errorf("migrate request stream flag: %w", err)
 	}
+	if err := ensureLogPayloadColumns(tx); err != nil {
+		return fmt.Errorf("migrate log payload columns: %w", err)
+	}
 	return tx.Commit()
 }
 
@@ -95,6 +98,54 @@ func ensureRequestStreamColumn(tx *sql.Tx) error {
 		return err
 	}
 	_, err = tx.Exec(`UPDATE requests SET stream = 1 WHERE CASE WHEN json_valid(CAST(request_body AS TEXT)) THEN json_extract(CAST(request_body AS TEXT), '$.stream') ELSE 0 END = 1`)
+	return err
+}
+
+func ensureLogPayloadColumns(tx *sql.Tx) error {
+	columns := []struct {
+		table      string
+		name       string
+		definition string
+	}{
+		{table: "requests", name: "request_body_encoding", definition: "TEXT NOT NULL DEFAULT 'identity'"},
+		{table: "requests", name: "response_body_encoding", definition: "TEXT NOT NULL DEFAULT 'identity'"},
+		{table: "requests", name: "payload_pruned_at", definition: "TEXT"},
+		{table: "attempts", name: "request_body_encoding", definition: "TEXT NOT NULL DEFAULT 'identity'"},
+		{table: "attempts", name: "response_body_encoding", definition: "TEXT NOT NULL DEFAULT 'identity'"},
+		{table: "attempts", name: "payload_pruned_at", definition: "TEXT"},
+	}
+	for _, column := range columns {
+		if err := ensureColumn(tx, column.table, column.name, column.definition); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func ensureColumn(tx *sql.Tx, table, name, definition string) error {
+	rows, err := tx.Query(`PRAGMA table_info(` + table + `)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var cid, notNull, primaryKey int
+		var columnName, columnType string
+		var defaultValue any
+		if err := rows.Scan(&cid, &columnName, &columnType, &notNull, &defaultValue, &primaryKey); err != nil {
+			return err
+		}
+		if columnName == name {
+			return nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	_, err = tx.Exec(`ALTER TABLE ` + table + ` ADD COLUMN ` + name + ` ` + definition)
 	return err
 }
 

@@ -124,6 +124,7 @@ export type RequestSummary = {
   response_status: number | null
   first_content_ms: number | null
   total_ms: number | null
+  payload_pruned: boolean
   created_at: string
   completed_at: string | null
 }
@@ -163,6 +164,7 @@ export type AttemptDetail = {
   upstream_protocol: string
   upstream_endpoint: string
   status: string
+  payload_pruned: boolean
   request_headers: string
   request_body: string
   response_status: number | null

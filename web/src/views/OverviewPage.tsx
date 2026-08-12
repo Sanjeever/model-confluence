@@ -98,7 +98,7 @@ export default function OverviewPage() {
             { title: '访问密钥', dataIndex: 'access_key_name', width: 140 },
             { title: '首内容', dataIndex: 'first_content_ms', width: 100, align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
             { title: '总耗时', dataIndex: 'total_ms', width: 100, align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
-            { title: '状态', dataIndex: 'status', width: 90, align: 'right', render: (value) => <Tag color={value === 'completed' ? 'success' : value === 'in_progress' ? 'processing' : 'error'}>{statusName(value)}</Tag> },
+            { title: '状态', dataIndex: 'status', width: 160, align: 'right', render: (value, record) => <Space size={4} wrap><Tag color={value === 'completed' ? 'success' : value === 'in_progress' ? 'processing' : 'error'}>{statusName(value)}</Tag>{record.payload_pruned && <Tag>载荷已清理</Tag>}</Space> },
             { title: '', width: 48, render: (_, record) => <Button type="text" icon={<EyeOutlined />} aria-label={`查看 ${record.id}`} onClick={(event) => { event.stopPropagation(); setDetailID(record.id) }} /> },
           ]}
           />
@@ -112,7 +112,7 @@ export default function OverviewPage() {
                 <div className="text-xs text-[#7c8d86]">{new Date(record.created_at).toLocaleString()}</div>
                 <code className="mt-1 block break-all text-xs">{record.id}</code>
               </div>
-              <Tag className="shrink-0" color={record.status === 'completed' ? 'success' : record.status === 'in_progress' ? 'processing' : 'error'}>{statusName(record.status)}</Tag>
+              <Space className="shrink-0" size={4} wrap><Tag color={record.status === 'completed' ? 'success' : record.status === 'in_progress' ? 'processing' : 'error'}>{statusName(record.status)}</Tag>{record.payload_pruned && <Tag>载荷已清理</Tag>}</Space>
             </div>
             <div className="mb-3 flex items-center justify-between gap-3">
               <code className="min-w-0 break-all text-sm font-medium">{record.virtual_model}</code>
@@ -146,6 +146,7 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
           { key: 'upstream_protocol', label: '上游协议', children: protocolName(detail.upstream_protocol) },
           { key: 'stream', label: '请求方式', children: detail.stream ? <Tag color="processing">流式</Tag> : <Tag>非流式</Tag> },
           { key: 'key', label: '访问密钥', children: detail.access_key_name },
+          { key: 'payload', label: '日志载荷', children: detail.payload_pruned ? <Tag>已按保留策略清理</Tag> : <Tag color="success">完整</Tag> },
           { key: 'latency', label: '总耗时', children: detail.total_ms == null ? '—' : `${detail.total_ms} ms` },
           { key: 'time', label: '请求时间', children: new Date(detail.created_at).toLocaleString() },
           { key: 'input', label: '输入 Token', children: detail.input_tokens ?? '—' },
@@ -153,17 +154,17 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
           { key: 'output', label: '输出 Token', children: detail.output_tokens ?? '—' },
         ]} />
         <Tabs items={[
-          { key: 'inbound', label: '入站请求', children: <PayloadPair headers={detail.request_headers} body={detail.request_body} reveal={reveal} /> },
-          { key: 'response', label: '客户端响应', children: <PayloadPair headerLabel="响应头" headers={detail.response_headers} body={detail.response_body} reveal={reveal} stream={detail.stream} summary={detail.response_summary} /> },
+          { key: 'inbound', label: detail.payload_pruned ? '入站请求（载荷已清理）' : '入站请求', children: <PayloadPair headers={detail.request_headers} body={detail.request_body} reveal={reveal} pruned={detail.payload_pruned} /> },
+          { key: 'response', label: detail.payload_pruned ? '客户端响应（载荷已清理）' : '客户端响应', children: <PayloadPair headerLabel="响应头" headers={detail.response_headers} body={detail.response_body} reveal={reveal} stream={detail.stream} summary={detail.response_summary} pruned={detail.payload_pruned} /> },
           { key: 'attempts', label: `上游尝试 ${detail.attempts.length}`, children: detail.attempts.length ? <Collapse items={detail.attempts.map((attempt) => ({
             key: attempt.id,
-            label: <Space wrap><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code className="break-all">{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag></Space>,
+            label: <Space wrap><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code className="break-all">{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag>{attempt.payload_pruned && <Tag>载荷已清理</Tag>}</Space>,
             children: <div className="space-y-6"><Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
               { key: 'endpoint', label: '上游端点', span: 3, children: <code className="break-all">{attempt.upstream_endpoint}</code> },
               { key: 'key', label: '上游密钥', children: attempt.upstream_key_name || '未命名' },
               { key: 'status', label: '响应状态', children: attempt.response_status ?? '—' },
               { key: 'latency', label: '总耗时', children: attempt.total_ms == null ? '—' : `${attempt.total_ms} ms` },
-            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} stream={detail.stream} summary={attempt.response_summary} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
+            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} pruned={attempt.payload_pruned} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} stream={detail.stream} summary={attempt.response_summary} pruned={attempt.payload_pruned} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
           }))} /> : <Empty className="py-16" description="该请求在调用上游前失败，没有产生上游尝试" /> },
         ]} />
       </>}
@@ -171,7 +172,8 @@ function RequestDrawer({ detail, loading, open, onClose }: { detail?: RequestDet
   )
 }
 
-function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal, stream = false, summary }: { title?: string; headerLabel?: string; headers: string; body: string; reveal: boolean; stream?: boolean; summary?: RequestDetail['response_summary'] }) {
+function PayloadPair({ title, headerLabel = '请求头', headers, body, reveal, stream = false, summary, pruned = false }: { title?: string; headerLabel?: string; headers: string; body: string; reveal: boolean; stream?: boolean; summary?: RequestDetail['response_summary']; pruned?: boolean }) {
+  if (pruned) return <div>{title && <div className="mc-eyebrow mb-3 text-[#7c8d86]">{title}</div>}<Empty className="py-8" description="载荷已按日志保留策略清理，仅保留结构化元数据" /></div>
   return <div>
     {title && <div className="mc-eyebrow mb-3 text-[#7c8d86]">{title}</div>}
     <Collapse size="small" className="mb-5" items={[{ key: 'headers', label: headerLabel, children: <JsonPayload value={reveal ? headers : maskHeaders(headers)} /> }]} />

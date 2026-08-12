@@ -200,11 +200,13 @@ func (h *Handler) requestDetail(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	if detail.Stream {
+	if detail.Stream && !detail.PayloadPruned {
 		detail.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(detail.ResponseBody), detail.InboundProtocol))
 		for index := range detail.Attempts {
 			attempt := &detail.Attempts[index]
-			attempt.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(attempt.ResponseBody), attempt.UpstreamProtocol))
+			if !attempt.PayloadPruned {
+				attempt.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(attempt.ResponseBody), attempt.UpstreamProtocol))
+			}
 		}
 	}
 	httpx.WriteJSON(w, http.StatusOK, detail)

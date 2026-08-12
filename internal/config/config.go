@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -27,6 +28,7 @@ type Config struct {
 	ResponseHeaderTimeout time.Duration
 	StreamIdleTimeout     time.Duration
 	MaxRequestBytes       int64
+	LogRetentionDays      int
 }
 
 func Load(args []string) (Config, error) {
@@ -50,6 +52,11 @@ func Load(args []string) (Config, error) {
 	responseHeaderTimeout := set.Duration("response-header-timeout", 5*time.Minute, "upstream response header timeout")
 	streamIdleTimeout := set.Duration("stream-idle-timeout", 5*time.Minute, "upstream stream idle timeout")
 	maxRequestBytes := set.Int64("max-request-bytes", 64<<20, "maximum inbound request body size")
+	defaultLogRetentionDays, err := envInt("MODEL_CONFLUENCE_LOG_RETENTION_DAYS", 0)
+	if err != nil {
+		return Config{}, fmt.Errorf("parse MODEL_CONFLUENCE_LOG_RETENTION_DAYS: %w", err)
+	}
+	logRetentionDays := set.Int("log-retention-days", defaultLogRetentionDays, "days to retain full request payloads; 0 keeps them forever")
 	if err := set.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -59,6 +66,9 @@ func Load(args []string) (Config, error) {
 	}
 	if *maxRequestBytes <= 0 {
 		return Config{}, errors.New("max-request-bytes must be positive")
+	}
+	if *logRetentionDays < 0 {
+		return Config{}, errors.New("log-retention-days must not be negative")
 	}
 
 	absDataDir, err := filepath.Abs(*dataDir)
@@ -76,6 +86,7 @@ func Load(args []string) (Config, error) {
 		ResponseHeaderTimeout: *responseHeaderTimeout,
 		StreamIdleTimeout:     *streamIdleTimeout,
 		MaxRequestBytes:       *maxRequestBytes,
+		LogRetentionDays:      *logRetentionDays,
 	}, nil
 }
 
@@ -84,6 +95,18 @@ func envOr(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func envInt(name string, fallback int) (int, error) {
+	value := os.Getenv(name)
+	if value == "" {
+		return fallback, nil
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, err
+	}
+	return parsed, nil
 }
 
 func splitCSV(value string) []string {

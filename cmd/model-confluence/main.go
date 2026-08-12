@@ -57,6 +57,20 @@ func run() error {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	cleanupCtx, cancelCleanup := context.WithCancel(ctx)
+	cleanupDone := make(chan struct{})
+	if cfg.LogRetentionDays > 0 {
+		go func() {
+			defer close(cleanupDone)
+			runLogCleanup(cleanupCtx, db, cfg.LogRetentionDays)
+		}()
+	} else {
+		close(cleanupDone)
+	}
+	defer func() {
+		cancelCleanup()
+		<-cleanupDone
+	}()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -74,5 +88,34 @@ func run() error {
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		return server.Shutdown(shutdownCtx)
+	}
+}
+
+func runLogCleanup(ctx context.Context, db *store.Store, retentionDays int) {
+	const interval = time.Hour
+	cleanup := func() {
+		before := time.Now().UTC().AddDate(0, 0, -retentionDays)
+		pruned, err := db.PruneLogs(ctx, before)
+		if err != nil {
+			if ctx.Err() == nil {
+				slog.Error("log payload cleanup failed", "error", err)
+			}
+			return
+		}
+		if pruned > 0 {
+			slog.Info("log payloads pruned", "requests", pruned, "before", before)
+		}
+	}
+
+	cleanup()
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			cleanup()
+		}
 	}
 }
