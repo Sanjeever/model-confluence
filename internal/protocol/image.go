@@ -57,7 +57,7 @@ func decodeResponsesImage(raw map[string]json.RawMessage, path string) (Image, e
 	return Image{Source: imageSource, Detail: source.Detail}, nil
 }
 
-func decodeMessagesImage(raw map[string]json.RawMessage, path string) (Image, error) {
+func decodeMessagesImage(raw json.RawMessage, path string) (Image, error) {
 	var source struct {
 		Type      string `json:"type"`
 		URL       string `json:"url"`
@@ -65,11 +65,7 @@ func decodeMessagesImage(raw map[string]json.RawMessage, path string) (Image, er
 		Data      string `json:"data"`
 		FileID    string `json:"file_id"`
 	}
-	encoded, err := json.Marshal(raw)
-	if err != nil {
-		return Image{}, err
-	}
-	if err := json.Unmarshal(encoded, &source); err != nil {
+	if err := json.Unmarshal(raw, &source); err != nil {
 		return Image{}, fmt.Errorf("%s: %w", path, err)
 	}
 	switch source.Type {
