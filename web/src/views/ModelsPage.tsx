@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { App, Button, Card, Collapse, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { App, Button, Card, Collapse, Empty, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, ExperimentOutlined, PlusOutlined } from '@ant-design/icons'
-import { api, type CandidateProtocol, type DeleteResult, type ModelTestResult, type Provider, type VirtualModel } from '../api'
+import { api, type CandidateProtocol, type DeleteResult, type ModelTestResult, type Page, type ProviderOption, type VirtualModel } from '../api'
 import JsonPayload from '../components/JsonPayload'
 
 const protocolLabels: Record<CandidateProtocol['protocol'], string> = {
@@ -19,12 +19,25 @@ export default function ModelsPage() {
   const [editing, setEditing] = useState<VirtualModel | null>(null)
   const [testing, setTesting] = useState<VirtualModel | null>(null)
   const [testPrompt, setTestPrompt] = useState('请简短回复：模型连接正常')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [nameInput, setNameInput] = useState('')
+  const [name, setName] = useState('')
+  const [enabled, setEnabled] = useState('')
   const [testResult, setTestResult] = useState<ModelTestResult | null>(null)
   const [form] = Form.useForm<ModelForm>()
   const { message } = App.useApp()
   const queryClient = useQueryClient()
-  const providers = useQuery({ queryKey: ['providers'], queryFn: () => api<Provider[]>('/api/admin/providers') })
-  const models = useQuery({ queryKey: ['models'], queryFn: () => api<VirtualModel[]>('/api/admin/models') })
+  const providers = useQuery({ queryKey: ['provider-options'], queryFn: () => api<ProviderOption[]>('/api/admin/provider-options') })
+  const models = useQuery({
+    queryKey: ['models', page, pageSize, name, enabled],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+      if (name) params.set('name', name)
+      if (enabled) params.set('enabled', enabled)
+      return api<Page<VirtualModel>>(`/api/admin/models?${params}`)
+    },
+  })
   const save = useMutation({
     mutationFn: (values: ModelForm) => api(editing ? `/api/admin/models/${editing.id}` : '/api/admin/models', {
       method: editing ? 'PUT' : 'POST',
@@ -102,22 +115,24 @@ export default function ModelsPage() {
   return (
     <div className="mc-enter mx-auto max-w-[1500px]">
       <div className="mb-6 flex items-center justify-between gap-3 sm:mb-8"><Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">模型路由</Typography.Title><Button type="primary" icon={<PlusOutlined />} onClick={createModel} disabled={!providers.data?.length}>新增虚拟模型</Button></div>
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+        <Input.Search allowClear enterButton="搜索" placeholder="搜索虚拟模型" className="min-w-0 sm:max-w-[360px]" value={nameInput} onChange={(event) => { const value = event.target.value; setNameInput(value); if (!value) { setName(''); setPage(1) } }} onSearch={(value) => { setName(value.trim()); setPage(1) }} />
+        <Select allowClear placeholder="状态" className="w-full sm:w-[140px]" value={enabled || undefined} onChange={(value) => { setEnabled(value ?? ''); setPage(1) }} options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
+      </div>
       <div className="hidden lg:block">
-        <Table rowKey="id" loading={models.isPending} dataSource={models.data ?? []} pagination={false} scroll={{ x: 900 }} expandable={{ expandedRowRender: (model) => <ModelCandidates model={model} /> }} columns={[
+        <Table rowKey="id" loading={models.isPending} dataSource={models.data?.items ?? []} scroll={{ x: 900, y: 'calc(100vh - 390px)' }} pagination={{ current: page, pageSize, total: models.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }} locale={{ emptyText: <Empty className="py-14" description={name || enabled ? '没有匹配的模型路由' : '暂无模型路由'} /> }} expandable={{ expandedRowRender: (model) => <ModelCandidates model={model} /> }} columns={[
           { title: '虚拟模型', dataIndex: 'name', render: (value) => <code className="text-sm font-medium">{value}</code> },
           { title: '候选', dataIndex: 'candidates', render: (value) => `${value.length} 条有序路由` },
           { title: '首选供应商', dataIndex: 'candidates', render: (value) => value[0]?.provider_name ?? '—' },
-          { title: '状态', dataIndex: 'enabled', render: (value) => value ? <Tag color="success">启用</Tag> : <Tag>停用</Tag> },
           { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
           { title: '操作', width: 148, align: 'right', render: (_, record) => <Space size={4}><Tooltip title={record.enabled ? '测试模型' : '启用后可测试'}><span><Button type="text" icon={<ExperimentOutlined />} aria-label={`测试 ${record.name}`} disabled={!record.enabled} onClick={() => testModel(record)} /></span></Tooltip><Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${record.name}`} onClick={() => editModel(record)} /><Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${record.name}`} /></Popconfirm></Space> },
         ]} />
       </div>
       <div className="space-y-3 lg:hidden">
-        {models.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : models.data?.length ? models.data.map((model) => (
+        {models.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : models.data?.items.length ? models.data.items.map((model) => (
           <Card key={model.id} size="small">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="min-w-0"><code className="break-all text-sm font-medium">{model.name}</code><div className="mt-1 text-xs text-[#7c8d86]">{model.candidates.length} 条有序路由 · {model.candidates[0]?.provider_name ?? '无候选'}</div></div>
-              <Tag className="shrink-0" color={model.enabled ? 'success' : undefined}>{model.enabled ? '启用' : '停用'}</Tag>
             </div>
             <Collapse ghost size="small" items={[{ key: 'candidates', label: '查看候选顺序', children: <ModelCandidates model={model} compact /> }]} />
             <div className="mt-2 flex items-center justify-end gap-1">
@@ -127,7 +142,8 @@ export default function ModelsPage() {
               <Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(model.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${model.name}`} /></Popconfirm>
             </div>
           </Card>
-        )) : <Card><Empty className="py-8" description="暂无模型路由" /></Card>}
+        )) : <Card><Empty className="py-8" description={name || enabled ? '没有匹配的模型路由' : '暂无模型路由'} /></Card>}
+        {!!models.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={models.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑模型路由' : '新增虚拟模型'} width={820} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存路由">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">
@@ -182,7 +198,7 @@ function ProtocolOrderField({ value = [], onChange, available }: { value?: Candi
   </div>
 }
 
-function configuredProtocols(providerID: number | undefined, providers?: Provider[]): CandidateProtocol['protocol'][] {
+function configuredProtocols(providerID: number | undefined, providers?: ProviderOption[]): CandidateProtocol['protocol'][] {
   const endpoints = providers?.find((provider) => provider.id === providerID)?.endpoints ?? {}
   return (Object.keys(protocolLabels) as CandidateProtocol['protocol'][]).filter((protocol) => !!endpoints[protocol])
 }

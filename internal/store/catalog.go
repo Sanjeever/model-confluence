@@ -23,6 +23,20 @@ type Provider struct {
 	CreatedAt     time.Time         `json:"created_at"`
 }
 
+type ProviderPage struct {
+	Items    []Provider `json:"items"`
+	Total    int        `json:"total"`
+	Page     int        `json:"page"`
+	PageSize int        `json:"page_size"`
+}
+
+type ProviderOption struct {
+	ID        int64             `json:"id"`
+	Name      string            `json:"name"`
+	Enabled   bool              `json:"enabled"`
+	Endpoints map[string]string `json:"endpoints"`
+}
+
 type UpstreamKey struct {
 	ID            int64      `json:"id"`
 	Name          string     `json:"name"`
@@ -61,34 +75,105 @@ func (s *Store) ListProviders() ([]Provider, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var providers []Provider
+	providers := make([]Provider, 0)
 	for rows.Next() {
-		var provider Provider
-		var staticHeadersJSON, quotaCodesJSON, createdAt string
-		if err := rows.Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(staticHeadersJSON), &provider.StaticHeaders); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(quotaCodesJSON), &provider.QuotaCodes); err != nil {
-			return nil, err
-		}
-		provider.CreatedAt, err = time.Parse(timestampLayout, createdAt)
-		if err != nil {
-			return nil, err
-		}
-		provider.Endpoints, err = s.providerEndpoints(provider.ID)
-		if err != nil {
-			return nil, err
-		}
-		provider.Keys, err = s.providerKeys(provider.ID, true)
+		provider, err := s.scanProvider(rows)
 		if err != nil {
 			return nil, err
 		}
 		providers = append(providers, provider)
 	}
 	return providers, rows.Err()
+}
+
+func (s *Store) ListProvidersPage(page, pageSize int, name, authType string, enabled *bool) (ProviderPage, error) {
+	where := "archived_at IS NULL"
+	args := []any{}
+	if name != "" {
+		where += " AND instr(name, ?) > 0"
+		args = append(args, name)
+	}
+	if authType != "" {
+		where += " AND auth_type = ?"
+		args = append(args, authType)
+	}
+	if enabled != nil {
+		where += " AND enabled = ?"
+		args = append(args, *enabled)
+	}
+
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM providers WHERE "+where, args...).Scan(&total); err != nil {
+		return ProviderPage{}, err
+	}
+	listArgs := append([]any(nil), args...)
+	listArgs = append(listArgs, pageSize, (page-1)*pageSize)
+	rows, err := s.db.Query(`SELECT id, name, enabled, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, listArgs...)
+	if err != nil {
+		return ProviderPage{}, err
+	}
+	defer rows.Close()
+	providers := make([]Provider, 0)
+	for rows.Next() {
+		provider, err := s.scanProvider(rows)
+		if err != nil {
+			return ProviderPage{}, err
+		}
+		providers = append(providers, provider)
+	}
+	if err := rows.Err(); err != nil {
+		return ProviderPage{}, err
+	}
+	return ProviderPage{Items: providers, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (s *Store) ListProviderOptions() ([]ProviderOption, error) {
+	rows, err := s.db.Query(`SELECT id, name, enabled FROM providers WHERE archived_at IS NULL ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	options := make([]ProviderOption, 0)
+	for rows.Next() {
+		var option ProviderOption
+		if err := rows.Scan(&option.ID, &option.Name, &option.Enabled); err != nil {
+			return nil, err
+		}
+		option.Endpoints, err = s.providerEndpoints(option.ID)
+		if err != nil {
+			return nil, err
+		}
+		options = append(options, option)
+	}
+	return options, rows.Err()
+}
+
+func (s *Store) scanProvider(row rowScanner) (Provider, error) {
+	var provider Provider
+	var staticHeadersJSON, quotaCodesJSON, createdAt string
+	if err := row.Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt); err != nil {
+		return Provider{}, err
+	}
+	if err := json.Unmarshal([]byte(staticHeadersJSON), &provider.StaticHeaders); err != nil {
+		return Provider{}, err
+	}
+	if err := json.Unmarshal([]byte(quotaCodesJSON), &provider.QuotaCodes); err != nil {
+		return Provider{}, err
+	}
+	var err error
+	provider.CreatedAt, err = time.Parse(timestampLayout, createdAt)
+	if err != nil {
+		return Provider{}, err
+	}
+	provider.Endpoints, err = s.providerEndpoints(provider.ID)
+	if err != nil {
+		return Provider{}, err
+	}
+	provider.Keys, err = s.providerKeys(provider.ID, true)
+	if err != nil {
+		return Provider{}, err
+	}
+	return provider, nil
 }
 
 func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
@@ -365,6 +450,13 @@ type VirtualModel struct {
 	CreatedAt  time.Time        `json:"created_at"`
 }
 
+type VirtualModelPage struct {
+	Items    []VirtualModel `json:"items"`
+	Total    int            `json:"total"`
+	Page     int            `json:"page"`
+	PageSize int            `json:"page_size"`
+}
+
 type ModelCandidate struct {
 	ID                     int64               `json:"id"`
 	ProviderID             int64               `json:"provider_id"`
@@ -408,24 +500,70 @@ func (s *Store) ListVirtualModels() ([]VirtualModel, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var models []VirtualModel
+	models := make([]VirtualModel, 0)
 	for rows.Next() {
-		var model VirtualModel
-		var createdAt string
-		if err := rows.Scan(&model.ID, &model.Name, &model.Enabled, &createdAt); err != nil {
-			return nil, err
-		}
-		model.CreatedAt, err = time.Parse(timestampLayout, createdAt)
-		if err != nil {
-			return nil, err
-		}
-		model.Candidates, err = s.modelCandidates(model.ID)
+		model, err := s.scanVirtualModel(rows)
 		if err != nil {
 			return nil, err
 		}
 		models = append(models, model)
 	}
 	return models, rows.Err()
+}
+
+func (s *Store) ListVirtualModelsPage(page, pageSize int, name string, enabled *bool) (VirtualModelPage, error) {
+	where := "archived_at IS NULL"
+	args := []any{}
+	if name != "" {
+		where += " AND instr(name, ?) > 0"
+		args = append(args, name)
+	}
+	if enabled != nil {
+		where += " AND enabled = ?"
+		args = append(args, *enabled)
+	}
+
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM virtual_models WHERE "+where, args...).Scan(&total); err != nil {
+		return VirtualModelPage{}, err
+	}
+	listArgs := append([]any(nil), args...)
+	listArgs = append(listArgs, pageSize, (page-1)*pageSize)
+	rows, err := s.db.Query(`SELECT id, name, enabled, created_at FROM virtual_models WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, listArgs...)
+	if err != nil {
+		return VirtualModelPage{}, err
+	}
+	defer rows.Close()
+	models := make([]VirtualModel, 0)
+	for rows.Next() {
+		model, err := s.scanVirtualModel(rows)
+		if err != nil {
+			return VirtualModelPage{}, err
+		}
+		models = append(models, model)
+	}
+	if err := rows.Err(); err != nil {
+		return VirtualModelPage{}, err
+	}
+	return VirtualModelPage{Items: models, Total: total, Page: page, PageSize: pageSize}, nil
+}
+
+func (s *Store) scanVirtualModel(row rowScanner) (VirtualModel, error) {
+	var model VirtualModel
+	var createdAt string
+	if err := row.Scan(&model.ID, &model.Name, &model.Enabled, &createdAt); err != nil {
+		return VirtualModel{}, err
+	}
+	var err error
+	model.CreatedAt, err = time.Parse(timestampLayout, createdAt)
+	if err != nil {
+		return VirtualModel{}, err
+	}
+	model.Candidates, err = s.modelCandidates(model.ID)
+	if err != nil {
+		return VirtualModel{}, err
+	}
+	return model, nil
 }
 
 func (s *Store) VirtualModelName(id int64) (string, error) {

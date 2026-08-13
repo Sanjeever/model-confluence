@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Collapse, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { Button, Card, Collapse, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
-import { api, type DeleteResult, type Provider } from '../api'
+import { api, type DeleteResult, type Page, type Provider } from '../api'
 
 type ProviderKeyForm = { id?: number; name?: string; secret?: string; expires_at?: Dayjs | null; enabled?: boolean }
 type ProviderForm = {
@@ -42,9 +42,24 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
 export default function ProvidersPage() {
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Provider | null>(null)
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const [nameInput, setNameInput] = useState('')
+  const [name, setName] = useState('')
+  const [enabled, setEnabled] = useState('')
+  const [authType, setAuthType] = useState('')
   const [form] = Form.useForm<ProviderForm>()
   const queryClient = useQueryClient()
-  const providers = useQuery({ queryKey: ['providers'], queryFn: () => api<Provider[]>('/api/admin/providers') })
+  const providers = useQuery({
+    queryKey: ['providers', page, pageSize, name, enabled, authType],
+    queryFn: () => {
+      const params = new URLSearchParams({ page: String(page), page_size: String(pageSize) })
+      if (name) params.set('name', name)
+      if (enabled) params.set('enabled', enabled)
+      if (authType) params.set('auth_type', authType)
+      return api<Page<Provider>>(`/api/admin/providers?${params}`)
+    },
+  })
   const save = useMutation({
     mutationFn: (values: ProviderForm) => {
       const endpoints = Object.fromEntries([
@@ -69,13 +84,17 @@ export default function ProvidersPage() {
       setEditing(null)
       form.resetFields()
       queryClient.invalidateQueries({ queryKey: ['providers'] })
+      queryClient.invalidateQueries({ queryKey: ['provider-options'] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
     },
     onError: (error) => message.error(error instanceof SyntaxError ? '静态请求头必须是合法 JSON 对象' : error.message),
   })
   const toggle = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => api(`/api/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['providers'] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['providers'] })
+      queryClient.invalidateQueries({ queryKey: ['provider-options'] })
+    },
     onError: (error) => message.error(error.message),
   })
   const remove = useMutation({
@@ -83,6 +102,7 @@ export default function ProvidersPage() {
     onSuccess: (result) => {
       message.success(result.archived ? '供应商已归档，历史记录保持不变' : '供应商已删除')
       queryClient.invalidateQueries({ queryKey: ['providers'] })
+      queryClient.invalidateQueries({ queryKey: ['provider-options'] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
     },
     onError: (error) => message.error(error.message),
@@ -118,23 +138,26 @@ export default function ProvidersPage() {
   return (
     <div className="mc-enter mx-auto max-w-[1500px]">
       <PageHeader title="供应商"><Button type="primary" icon={<PlusOutlined />} onClick={createProvider}>新增供应商</Button></PageHeader>
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row">
+        <Input.Search allowClear enterButton="搜索" placeholder="搜索名称" className="min-w-0 sm:max-w-[360px]" value={nameInput} onChange={(event) => { const value = event.target.value; setNameInput(value); if (!value) { setName(''); setPage(1) } }} onSearch={(value) => { setName(value.trim()); setPage(1) }} />
+        <Select allowClear placeholder="状态" className="w-full sm:w-[140px]" value={enabled || undefined} onChange={(value) => { setEnabled(value ?? ''); setPage(1) }} options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
+        <Select allowClear placeholder="鉴权方式" className="w-full sm:w-[180px]" value={authType || undefined} onChange={(value) => { setAuthType(value ?? ''); setPage(1) }} options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} />
+      </div>
       <div className="hidden lg:block">
-        <Table rowKey="id" loading={providers.isPending} dataSource={providers.data ?? []} pagination={false} scroll={{ x: 900 }} expandable={{ expandedRowRender: (record) => <ProviderDetails record={record} /> }} columns={[
+        <Table rowKey="id" loading={providers.isPending} dataSource={providers.data?.items ?? []} scroll={{ x: 900, y: 'calc(100vh - 390px)' }} pagination={{ current: page, pageSize, total: providers.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }} locale={{ emptyText: <Empty className="py-14" description={name || enabled || authType ? '没有匹配的供应商' : '暂无供应商'} /> }} expandable={{ expandedRowRender: (record) => <ProviderDetails record={record} /> }} columns={[
           { title: '供应商', dataIndex: 'name', render: (value) => <strong>{value}</strong> },
           { title: '鉴权', dataIndex: 'auth_type', render: (value) => <Tag>{value}</Tag> },
           { title: '协议', dataIndex: 'endpoints', render: (value) => <Space wrap>{Object.keys(value).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space> },
           { title: '密钥池', dataIndex: 'keys', render: (value) => `${value.length} 把` },
-          { title: '状态', dataIndex: 'enabled', render: (value) => value ? <Tag color="success">启用</Tag> : <Tag>停用</Tag> },
           { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
           { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editProvider(record)} /><Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
         ]} />
       </div>
       <div className="space-y-3 lg:hidden">
-        {providers.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : providers.data?.length ? providers.data.map((provider) => (
+        {providers.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : providers.data?.items.length ? providers.data.items.map((provider) => (
           <Card key={provider.id} size="small">
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="min-w-0"><strong className="break-all">{provider.name}</strong><div className="mt-1 text-xs text-[#7c8d86]">{provider.auth_type} · {provider.keys.length} 把密钥</div></div>
-              <Tag className="shrink-0" color={provider.enabled ? 'success' : undefined}>{provider.enabled ? '启用' : '停用'}</Tag>
             </div>
             <Space wrap size={[4, 4]} className="mb-3">{Object.keys(provider.endpoints).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space>
             <Collapse ghost size="small" items={[{ key: 'details', label: '端点与密钥池', children: <ProviderDetails record={provider} compact /> }]} />
@@ -144,7 +167,8 @@ export default function ProvidersPage() {
               <Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(provider.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${provider.name}`} /></Popconfirm>
             </div>
           </Card>
-        )) : <Card><Empty className="py-8" description="暂无供应商" /></Card>}
+        )) : <Card><Empty className="py-8" description={name || enabled || authType ? '没有匹配的供应商' : '暂无供应商'} /></Card>}
+        {!!providers.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={providers.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑供应商' : '新增供应商'} width={760} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">

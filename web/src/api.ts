@@ -38,6 +38,13 @@ export type Overview = {
   virtual_models: number
 }
 
+export type Page<T> = {
+  items: T[]
+  total: number
+  page: number
+  page_size: number
+}
+
 export type PerformanceLatencyStats = {
   p50: number | null
   p95: number | null
@@ -110,6 +117,8 @@ export type Provider = {
   keys: UpstreamKey[]
   created_at: string
 }
+
+export type ProviderOption = Pick<Provider, 'id' | 'name' | 'enabled' | 'endpoints'>
 
 export type CandidateProtocol = {
   protocol: 'chat_completions' | 'responses' | 'messages'

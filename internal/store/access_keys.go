@@ -21,6 +21,13 @@ type DeleteResult struct {
 	Archived bool `json:"archived"`
 }
 
+type AccessKeyPage struct {
+	Items    []AccessKey `json:"items"`
+	Total    int         `json:"total"`
+	Page     int         `json:"page"`
+	PageSize int         `json:"page_size"`
+}
+
 func (s *Store) ListAccessKeys() ([]AccessKey, error) {
 	rows, err := s.db.Query(`SELECT id, name, secret, enabled, expires_at, last_used_at, created_at FROM access_keys WHERE archived_at IS NULL ORDER BY id DESC`)
 	if err != nil {
@@ -36,6 +43,43 @@ func (s *Store) ListAccessKeys() ([]AccessKey, error) {
 		keys = append(keys, key)
 	}
 	return keys, rows.Err()
+}
+
+func (s *Store) ListAccessKeysPage(page, pageSize int, name string, enabled *bool) (AccessKeyPage, error) {
+	where := "archived_at IS NULL"
+	args := []any{}
+	if name != "" {
+		where += " AND instr(name, ?) > 0"
+		args = append(args, name)
+	}
+	if enabled != nil {
+		where += " AND enabled = ?"
+		args = append(args, *enabled)
+	}
+
+	var total int
+	if err := s.db.QueryRow("SELECT COUNT(*) FROM access_keys WHERE "+where, args...).Scan(&total); err != nil {
+		return AccessKeyPage{}, err
+	}
+	listArgs := append([]any(nil), args...)
+	listArgs = append(listArgs, pageSize, (page-1)*pageSize)
+	rows, err := s.db.Query(`SELECT id, name, secret, enabled, expires_at, last_used_at, created_at FROM access_keys WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, listArgs...)
+	if err != nil {
+		return AccessKeyPage{}, err
+	}
+	defer rows.Close()
+	keys := make([]AccessKey, 0)
+	for rows.Next() {
+		key, err := scanAccessKey(rows)
+		if err != nil {
+			return AccessKeyPage{}, err
+		}
+		keys = append(keys, key)
+	}
+	if err := rows.Err(); err != nil {
+		return AccessKeyPage{}, err
+	}
+	return AccessKeyPage{Items: keys, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
 func (s *Store) CreateAccessKey(name string, expiresAt *time.Time) (AccessKey, error) {

@@ -51,6 +51,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editAccessKey))))
 	mux.Handle("DELETE /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteAccessKey))))
 	mux.Handle("GET /api/admin/providers", h.requireSession(http.HandlerFunc(h.listProviders)))
+	mux.Handle("GET /api/admin/provider-options", h.requireSession(http.HandlerFunc(h.listProviderOptions)))
 	mux.Handle("POST /api/admin/providers", h.requireSession(h.requireCSRF(http.HandlerFunc(h.createProvider))))
 	mux.Handle("PATCH /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.updateProvider))))
 	mux.Handle("PUT /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editProvider))))
@@ -234,8 +235,16 @@ func toInt64Pointer(value *int) *int64 {
 	return &converted
 }
 
-func (h *Handler) listAccessKeys(w http.ResponseWriter, _ *http.Request) {
-	keys, err := h.store.ListAccessKeys()
+func (h *Handler) listAccessKeys(w http.ResponseWriter, r *http.Request) {
+	page, pageSize, ok := paginationQuery(w, r)
+	if !ok {
+		return
+	}
+	enabled, ok := enabledQuery(w, r)
+	if !ok {
+		return
+	}
+	keys, err := h.store.ListAccessKeysPage(page, pageSize, strings.TrimSpace(r.URL.Query().Get("name")), enabled)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -331,8 +340,30 @@ func (h *Handler) deleteAccessKey(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
-func (h *Handler) listProviders(w http.ResponseWriter, _ *http.Request) {
-	providers, err := h.store.ListProviders()
+func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
+	page, pageSize, ok := paginationQuery(w, r)
+	if !ok {
+		return
+	}
+	enabled, ok := enabledQuery(w, r)
+	if !ok {
+		return
+	}
+	authType := strings.TrimSpace(r.URL.Query().Get("auth_type"))
+	if authType != "" && authType != "bearer" && authType != "x-api-key" && authType != "custom" {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_type 参数无效"})
+		return
+	}
+	providers, err := h.store.ListProvidersPage(page, pageSize, strings.TrimSpace(r.URL.Query().Get("name")), authType, enabled)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, providers)
+}
+
+func (h *Handler) listProviderOptions(w http.ResponseWriter, _ *http.Request) {
+	providers, err := h.store.ListProviderOptions()
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -392,8 +423,16 @@ func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
-func (h *Handler) listModels(w http.ResponseWriter, _ *http.Request) {
-	models, err := h.store.ListVirtualModels()
+func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
+	page, pageSize, ok := paginationQuery(w, r)
+	if !ok {
+		return
+	}
+	enabled, ok := enabledQuery(w, r)
+	if !ok {
+		return
+	}
+	models, err := h.store.ListVirtualModelsPage(page, pageSize, strings.TrimSpace(r.URL.Query().Get("name")), enabled)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -613,6 +652,31 @@ func positiveQuery(w http.ResponseWriter, r *http.Request, name string, fallback
 		value = parsed
 	}
 	return value, true
+}
+
+func paginationQuery(w http.ResponseWriter, r *http.Request) (int, int, bool) {
+	page, ok := positiveQuery(w, r, "page", 1, 0)
+	if !ok {
+		return 0, 0, false
+	}
+	pageSize, ok := positiveQuery(w, r, "page_size", 10, 100)
+	if !ok {
+		return 0, 0, false
+	}
+	return page, pageSize, true
+}
+
+func enabledQuery(w http.ResponseWriter, r *http.Request) (*bool, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get("enabled"))
+	if raw == "" {
+		return nil, true
+	}
+	enabled, err := strconv.ParseBool(raw)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "enabled 参数无效"})
+		return nil, false
+	}
+	return &enabled, true
 }
 
 func requestTimeRange(r *http.Request) (time.Time, time.Time, error) {
