@@ -83,7 +83,7 @@ export default function AccessKeysPage() {
           rowKey="id"
           loading={keys.isPending}
           dataSource={keys.data?.items ?? []}
-          scroll={{ x: 1100, y: 'calc(100vh - 390px)' }}
+          scroll={{ x: 1100, y: 'calc(100vh - 330px)' }}
           pagination={{ current: page, pageSize, total: keys.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }}
           columns={[
             { title: '名称', dataIndex: 'name', render: (value) => <strong>{value}</strong> },
