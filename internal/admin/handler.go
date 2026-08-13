@@ -42,6 +42,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/admin/logout", h.requireSession(h.requireCSRF(http.HandlerFunc(h.logout))))
 	mux.Handle("POST /api/admin/change-password", h.requireSession(h.requireCSRF(http.HandlerFunc(h.changePassword))))
 	mux.Handle("GET /api/admin/overview", h.requireSession(http.HandlerFunc(h.overview)))
+	mux.Handle("GET /api/admin/performance", h.requireSession(http.HandlerFunc(h.performance)))
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))
 	mux.Handle("GET /api/admin/requests/{id}", h.requireSession(http.HandlerFunc(h.requestDetail)))
 	mux.Handle("GET /api/admin/access-keys", h.requireSession(http.HandlerFunc(h.listAccessKeys)))
@@ -136,18 +137,27 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (h *Handler) overview(w http.ResponseWriter, r *http.Request) {
-	createdFrom, createdTo, err := requestTimeRange(r)
-	if err != nil {
-		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
-		return
-	}
-	overview, err := h.store.Overview(createdFrom, createdTo)
+func (h *Handler) overview(w http.ResponseWriter, _ *http.Request) {
+	overview, err := h.store.Overview()
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, overview)
+}
+
+func (h *Handler) performance(w http.ResponseWriter, r *http.Request) {
+	createdFrom, createdTo, err := requestTimeRange(r)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	performance, err := h.store.PerformanceOverview(createdFrom, createdTo)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, performance)
 }
 
 func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {

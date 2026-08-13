@@ -36,7 +36,41 @@ export type Overview = {
   access_keys: number
   providers: number
   virtual_models: number
+}
+
+export type PerformanceLatencyStats = {
+  p50: number | null
+  p95: number | null
+  sample_count: number
+}
+
+export type PerformanceRequest = {
+  id: string
+  status: string
+  virtual_model: string
+  inbound_protocol: string
+  upstream_protocol: string
+  provider_name: string
+  upstream_model: string
+  response_status: number | null
+  first_content_ms: number | null
+  total_ms: number | null
+  error_message: string
+  created_at: string
+}
+
+export type PerformanceOverview = {
   request_count: number
+  status_counts: {
+    completed: number
+    failed: number
+    cancelled: number
+    in_progress: number
+  }
+  success_rate: number | null
+  first_content_latency: PerformanceLatencyStats
+  total_latency: PerformanceLatencyStats
+  attention_requests: PerformanceRequest[]
 }
 
 export type AccessKey = {

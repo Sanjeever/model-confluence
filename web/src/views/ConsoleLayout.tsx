@@ -1,18 +1,20 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button, Drawer, Layout, Menu, Switch } from 'antd'
-import { ApiOutlined, BranchesOutlined, DatabaseOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
+import { ApiOutlined, BranchesOutlined, DashboardOutlined, DatabaseOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
 import { api } from '../api'
 import OverviewPage from './OverviewPage'
+import PerformancePage from './PerformancePage'
 import AccessKeysPage from './AccessKeysPage'
 import ProvidersPage from './ProvidersPage'
 import ModelsPage from './ModelsPage'
 
 const { Sider, Content } = Layout
 
-type Page = 'overview' | 'keys' | 'providers' | 'models'
+type Page = 'performance' | 'overview' | 'keys' | 'providers' | 'models'
 
 const menuItems = [
+  { key: 'performance', icon: <DashboardOutlined />, label: '性能监控' },
   { key: 'overview', icon: <DatabaseOutlined />, label: '使用记录' },
   { key: 'keys', icon: <KeyOutlined />, label: '访问密钥' },
   { key: 'providers', icon: <ApiOutlined />, label: '供应商' },
@@ -20,7 +22,7 @@ const menuItems = [
 ]
 
 export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; onThemeChange: (value: boolean) => void }) {
-  const [page, setPage] = useState<Page>('overview')
+  const [page, setPage] = useState<Page>('performance')
   const [collapsed, setCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const queryClient = useQueryClient()
@@ -71,6 +73,7 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
           <Button type="text" icon={<MenuOutlined />} aria-label="打开导航" onClick={() => setMobileMenuOpen(true)} />
         </header>
         <Content className="mc-grid min-h-[calc(100dvh-64px)] overflow-visible p-4 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:p-8">
+          {page === 'performance' && <PerformancePage />}
           {page === 'overview' && <OverviewPage />}
           {page === 'keys' && <AccessKeysPage />}
           {page === 'providers' && <ProvidersPage />}
