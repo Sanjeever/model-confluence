@@ -495,7 +495,7 @@ type CreateCandidateInput struct {
 }
 
 func (s *Store) ListVirtualModels() ([]VirtualModel, error) {
-	rows, err := s.db.Query(`SELECT id, name, enabled, created_at FROM virtual_models WHERE archived_at IS NULL ORDER BY id DESC`)
+	rows, err := s.db.Query(`SELECT id, name, enabled, created_at FROM virtual_models WHERE archived_at IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -529,7 +529,7 @@ func (s *Store) ListVirtualModelsPage(page, pageSize int, name string, enabled *
 	}
 	listArgs := append([]any(nil), args...)
 	listArgs = append(listArgs, pageSize, (page-1)*pageSize)
-	rows, err := s.db.Query(`SELECT id, name, enabled, created_at FROM virtual_models WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, listArgs...)
+	rows, err := s.db.Query(`SELECT id, name, enabled, created_at FROM virtual_models WHERE `+where+` ORDER BY name LIMIT ? OFFSET ?`, listArgs...)
 	if err != nil {
 		return VirtualModelPage{}, err
 	}
