@@ -20,6 +20,12 @@ type ProviderForm = {
 
 const providerTemplates: Array<{ name: string; chat_completions: string; responses: string; messages: string }> = [
   {
+    name: '火山方舟 Agent Plan',
+    chat_completions: 'https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions',
+    responses: 'https://ark.cn-beijing.volces.com/api/plan/v3/responses',
+    messages: 'https://ark.cn-beijing.volces.com/api/plan/v1/messages',
+  },
+  {
     name: '火山方舟 Coding Plan',
     chat_completions: 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions',
     responses: 'https://ark.cn-beijing.volces.com/api/coding/v3/responses',
@@ -36,6 +42,24 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     chat_completions: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
     responses: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses',
     messages: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
+  },
+  {
+    name: 'OpenRouter',
+    chat_completions: 'https://openrouter.ai/api/v1/chat/completions',
+    responses: 'https://openrouter.ai/api/v1/responses',
+    messages: 'https://openrouter.ai/api/v1/messages',
+  },
+  {
+    name: 'Groq',
+    chat_completions: 'https://api.groq.com/openai/v1/chat/completions',
+    responses: 'https://api.groq.com/openai/v1/responses',
+    messages: '',
+  },
+  {
+    name: 'SiliconFlow',
+    chat_completions: 'https://api.siliconflow.cn/v1/chat/completions',
+    responses: '',
+    messages: 'https://api.siliconflow.cn/v1/messages',
   },
 ]
 
