@@ -113,6 +113,8 @@ func ensureLogPayloadColumns(tx *sql.Tx) error {
 		{table: "attempts", name: "request_body_encoding", definition: "TEXT NOT NULL DEFAULT 'identity'"},
 		{table: "attempts", name: "response_body_encoding", definition: "TEXT NOT NULL DEFAULT 'identity'"},
 		{table: "attempts", name: "payload_pruned_at", definition: "TEXT"},
+		{table: "requests", name: "upstream_model", definition: "TEXT"},
+		{table: "requests", name: "provider_name", definition: "TEXT"},
 	}
 	for _, column := range columns {
 		if err := ensureColumn(tx, column.table, column.name, column.definition); err != nil {

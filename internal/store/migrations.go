@@ -119,6 +119,8 @@ CREATE TABLE IF NOT EXISTS requests (
     access_key_id INTEGER REFERENCES access_keys(id),
     access_key_name TEXT,
     virtual_model TEXT,
+    upstream_model TEXT,
+    provider_name TEXT,
     inbound_protocol TEXT NOT NULL,
     inbound_endpoint TEXT NOT NULL,
 	stream INTEGER NOT NULL DEFAULT 0,

@@ -43,6 +43,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/admin/change-password", h.requireSession(h.requireCSRF(http.HandlerFunc(h.changePassword))))
 	mux.Handle("GET /api/admin/overview", h.requireSession(http.HandlerFunc(h.overview)))
 	mux.Handle("GET /api/admin/performance", h.requireSession(http.HandlerFunc(h.performance)))
+	mux.Handle("GET /api/admin/health", h.requireSession(http.HandlerFunc(h.health)))
+	mux.Handle("GET /api/admin/costs", h.requireSession(http.HandlerFunc(h.costs)))
+	mux.Handle("GET /api/admin/model-names", h.requireSession(http.HandlerFunc(h.modelNames)))
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))
 	mux.Handle("GET /api/admin/requests/{id}", h.requireSession(http.HandlerFunc(h.requestDetail)))
 	mux.Handle("GET /api/admin/access-keys", h.requireSession(http.HandlerFunc(h.listAccessKeys)))
@@ -159,6 +162,38 @@ func (h *Handler) performance(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, performance)
+}
+
+func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
+	health, err := h.store.HealthStatus()
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, health)
+}
+
+func (h *Handler) costs(w http.ResponseWriter, r *http.Request) {
+	createdFrom, createdTo, err := requestTimeRange(r)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		return
+	}
+	usage, err := h.store.UsageBreakdown(createdFrom, createdTo, strings.TrimSpace(r.URL.Query().Get("virtual_model")))
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, usage)
+}
+
+func (h *Handler) modelNames(w http.ResponseWriter, _ *http.Request) {
+	names, err := h.store.VirtualModelNames()
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, names)
 }
 
 func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {

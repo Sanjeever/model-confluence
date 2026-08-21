@@ -1,21 +1,25 @@
 import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { Button, Drawer, Layout, Menu, Switch } from 'antd'
-import { ApiOutlined, BranchesOutlined, DashboardOutlined, DatabaseOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined } from '@ant-design/icons'
+import { ApiOutlined, BranchesOutlined, DashboardOutlined, DatabaseOutlined, FundOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined, HeartOutlined } from '@ant-design/icons'
 import { api } from '../api'
 import OverviewPage from './OverviewPage'
 import PerformancePage from './PerformancePage'
+import CostsPage from './CostsPage'
+import HealthPage from './HealthPage'
 import AccessKeysPage from './AccessKeysPage'
 import ProvidersPage from './ProvidersPage'
 import ModelsPage from './ModelsPage'
 
 const { Sider, Content } = Layout
 
-type Page = 'performance' | 'overview' | 'keys' | 'providers' | 'models'
+type Page = 'performance' | 'overview' | 'costs' | 'health' | 'keys' | 'providers' | 'models'
 
 const menuItems = [
   { key: 'performance', icon: <DashboardOutlined />, label: '性能监控' },
   { key: 'overview', icon: <DatabaseOutlined />, label: '使用记录' },
+  { key: 'costs', icon: <FundOutlined />, label: '用量统计' },
+  { key: 'health', icon: <HeartOutlined />, label: '上游健康' },
   { key: 'keys', icon: <KeyOutlined />, label: '访问密钥' },
   { key: 'providers', icon: <ApiOutlined />, label: '供应商' },
   { key: 'models', icon: <BranchesOutlined />, label: '模型路由' },
@@ -75,6 +79,8 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
         <Content className="mc-grid min-h-[calc(100dvh-64px)] overflow-visible p-4 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:p-8">
           {page === 'performance' && <PerformancePage />}
           {page === 'overview' && <OverviewPage />}
+          {page === 'costs' && <CostsPage />}
+          {page === 'health' && <HealthPage />}
           {page === 'keys' && <AccessKeysPage />}
           {page === 'providers' && <ProvidersPage />}
           {page === 'models' && <ModelsPage />}

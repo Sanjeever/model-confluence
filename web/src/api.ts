@@ -244,3 +244,64 @@ export type RequestDetail = RequestSummary & {
 export type DeleteResult = {
   archived: boolean
 }
+
+export type TokenUsageBreakdown = {
+  input_tokens: number
+  cache_read_tokens: number
+  cache_write_tokens: number
+  output_tokens: number
+  reasoning_tokens: number
+  total_tokens: number
+  input_cached_tokens: number
+}
+
+export type UsageGroup = {
+  date: string
+  virtual_model: string
+  upstream_model: string
+  provider_name: string
+  request_count: number
+  usage: TokenUsageBreakdown
+}
+
+export type UsageSummary = {
+  request_count: number
+  group_count: number
+  usage: TokenUsageBreakdown
+}
+
+export type UsagePage = {
+  groups: UsageGroup[]
+  summary: UsageSummary
+}
+
+export type UpstreamKeyHealth = {
+  id: number
+  provider_name: string
+  name: string
+  position: number
+  enabled: boolean
+  runtime_status: string
+  runtime_reason?: string
+  recover_at: string | null
+  expires_at: string | null
+  last_used_at: string | null
+}
+
+export type CandidateHealth = {
+  candidate_id: number
+  virtual_model: string
+  upstream_model: string
+  provider_name: string
+  last_failure: string
+  last_failed_at: string
+  failed_count: number
+}
+
+export type HealthOverview = {
+  keys: UpstreamKeyHealth[]
+  candidates: CandidateHealth[]
+  unrouted_models: string[]
+  abnormal_key_count: number
+  failed_candidates: number
+}
