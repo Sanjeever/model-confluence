@@ -67,6 +67,12 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     responses: '',
     messages: 'https://note3-prev-api.askdiandian.com/v1/messages',
   },
+  {
+    name: 'TeamoRouter',
+    chat_completions: 'https://api.teamorouter.com/v1/chat/completions',
+    responses: 'https://api.teamorouter.com/v1/responses',
+    messages: 'https://api.teamorouter.com/v1/messages',
+  },
 ]
 
 export default function ProvidersPage() {
