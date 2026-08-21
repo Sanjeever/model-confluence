@@ -61,6 +61,12 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     responses: '',
     messages: 'https://api.siliconflow.cn/v1/messages',
   },
+  {
+    name: 'dots studio',
+    chat_completions: 'https://note3-prev-api.askdiandian.com/v1/chat/completions',
+    responses: '',
+    messages: 'https://note3-prev-api.askdiandian.com/v1/messages',
+  },
 ]
 
 export default function ProvidersPage() {
