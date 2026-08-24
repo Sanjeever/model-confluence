@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, Collapse, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography, message } from 'antd'
+import { App, Button, Card, Collapse, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type DeleteResult, type Page, type Provider } from '../api'
 
@@ -76,6 +76,7 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
 ]
 
 export default function ProvidersPage() {
+  const { message } = App.useApp()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<Provider | null>(null)
   const [page, setPage] = useState(1)
@@ -123,7 +124,7 @@ export default function ProvidersPage() {
       queryClient.invalidateQueries({ queryKey: ['provider-options'] })
       queryClient.invalidateQueries({ queryKey: ['overview'] })
     },
-    onError: (error) => message.error(error instanceof SyntaxError ? '静态请求头必须是合法 JSON 对象' : error.message),
+    onError: (error) => message.error(error.message),
   })
   const toggle = useMutation({
     mutationFn: ({ id, enabled }: { id: number; enabled: boolean }) => api(`/api/admin/providers/${id}`, { method: 'PATCH', body: JSON.stringify({ enabled }) }),
@@ -211,7 +212,7 @@ export default function ProvidersPage() {
           <div className="mb-5 flex flex-col gap-3 rounded border border-black/10 bg-black/[.015] px-4 py-3 dark:border-white/10 dark:bg-white/[.02] sm:flex-row sm:items-center sm:justify-between"><span className="text-sm text-[#7c8d86]">供应商模板</span><Space wrap>{providerTemplates.map((template) => <Button key={template.name} size="small" onClick={() => applyTemplate(template)}>{template.name}</Button>)}</Space></div>
           <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2"><Form.Item name="name" label="供应商名称" rules={[{ required: true }]}><Input placeholder="例如：OpenCode Go" /></Form.Item><Form.Item name="auth_type" label="上游鉴权" rules={[{ required: true }]}><Select options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} /></Form.Item></div>
           <Form.Item noStyle shouldUpdate={(before, after) => before.auth_type !== after.auth_type}>{({ getFieldValue }) => getFieldValue('auth_type') === 'custom' ? <Form.Item name="auth_header" label="自定义鉴权头" rules={[{ required: true }]}><Input placeholder="例如：api-key" /></Form.Item> : null}</Form.Item>
-          <Collapse ghost items={[{ key: 'endpoints', label: '协议端点', children: <div className="grid gap-1"><Form.Item name="chat_completions" label="Chat Completions 完整 URL"><Input placeholder="https://…/v1/chat/completions" /></Form.Item><Form.Item name="responses" label="Responses 完整 URL"><Input placeholder="https://…/v1/responses" /></Form.Item><Form.Item name="messages" label="Messages 完整 URL"><Input placeholder="https://…/v1/messages" /></Form.Item></div> }, { key: 'advanced', label: '高级设置', children: <><Form.Item name="quota_codes" label="额度耗尽错误码（一行一个）"><Input.TextArea rows={3} placeholder="AccountQuotaExceeded" /></Form.Item><Form.Item name="static_headers" label="静态请求头（JSON 对象）"><Input.TextArea rows={3} placeholder={'{"X-Custom-Header":"value"}'} className="font-mono" /></Form.Item></> }]} />
+          <Collapse ghost items={[{ key: 'endpoints', label: '协议端点', children: <div className="grid gap-1"><Form.Item name="chat_completions" label="Chat Completions 完整 URL"><Input placeholder="https://…/v1/chat/completions" /></Form.Item><Form.Item name="responses" label="Responses 完整 URL"><Input placeholder="https://…/v1/responses" /></Form.Item><Form.Item name="messages" label="Messages 完整 URL"><Input placeholder="https://…/v1/messages" /></Form.Item></div> }, { key: 'advanced', label: '高级设置', children: <><Form.Item name="quota_codes" label="额度耗尽错误码（一行一个）"><Input.TextArea rows={3} placeholder="AccountQuotaExceeded" /></Form.Item><Form.Item name="static_headers" label="静态请求头（JSON 对象）" rules={[{ validator: validateStaticHeaders }]}><Input.TextArea rows={3} placeholder={'{"X-Custom-Header":"value"}'} className="font-mono" /></Form.Item></> }]} />
           <div className="mb-3 mt-5 flex items-center justify-between"><span className="font-medium">上游密钥池</span></div>
           <Form.List name="keys">{(fields, { add, remove: removeField }) => <div className="space-y-3">{fields.map(({ key, ...field }, index) => <div key={key} className="grid grid-cols-[minmax(0,1fr)_36px] gap-3 rounded border border-black/10 p-3 dark:border-white/10 sm:grid-cols-[1fr_2fr_1.2fr_52px_36px]"><Form.Item {...field} name={[field.name, 'id']} hidden><Input /></Form.Item><Form.Item {...field} name={[field.name, 'name']} className="!mb-0 col-span-2 sm:col-span-1"><Input placeholder={`备注 ${index + 1}`} /></Form.Item><Form.Item {...field} name={[field.name, 'secret']} className="!mb-0 col-span-2 sm:col-span-1" rules={[{ validator: (_, value) => form.getFieldValue(['keys', field.name, 'id']) || value ? Promise.resolve() : Promise.reject(new Error('请输入密钥')) }]}><Input placeholder="上游密钥" suffix={<CopyOutlined className="cursor-pointer text-[#7c8d86]" onClick={() => { navigator.clipboard.writeText(form.getFieldValue(['keys', field.name, 'secret']) ?? ''); message.success('密钥已复制') }} />} /></Form.Item><Form.Item {...field} name={[field.name, 'expires_at']} className="!mb-0 col-span-2 sm:col-span-1"><DatePicker showTime placeholder="永不过期" className="w-full" /></Form.Item><div className="flex items-center justify-start sm:justify-center"><Form.Item {...field} name={[field.name, 'enabled']} noStyle valuePropName="checked"><Switch /></Form.Item></div><Button type="text" danger icon={<DeleteOutlined />} disabled={fields.length === 1} onClick={() => removeField(field.name)} /></div>)}<Button type="dashed" icon={<PlusOutlined />} onClick={() => add({ enabled: true })} block>添加密钥</Button></div>}</Form.List>
         </Form>
@@ -233,4 +234,17 @@ function PageHeader({ title, children }: { title: string; children: React.ReactN
 
 function runtimeStatusName(value: string): string {
   return ({ available: '可用', auth_invalid: '鉴权失效', quota_exhausted: '额度耗尽', rate_limited: '限流冷却' } as Record<string, string>)[value] ?? value
+}
+
+function validateStaticHeaders(_: unknown, value?: string): Promise<void> {
+  if (!value?.trim()) return Promise.resolve()
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (parsed == null || Array.isArray(parsed) || typeof parsed !== 'object' || Object.values(parsed).some((item) => typeof item !== 'string')) {
+      return Promise.reject(new Error('静态请求头必须是字符串键值的 JSON 对象'))
+    }
+    return Promise.resolve()
+  } catch {
+    return Promise.reject(new Error('静态请求头必须是合法 JSON 对象'))
+  }
 }

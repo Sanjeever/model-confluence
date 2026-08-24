@@ -3,8 +3,7 @@ import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, DatePicker, Empty, Row, Skeleton, Select, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type RequestDetail, type UsageGroup, type UsagePage } from '../api'
-import RequestDrawer from '../components/RequestDrawer'
+import { api, type UsageGroup, type UsagePage } from '../api'
 import MetricCard from '../components/MetricCard'
 import { formatCount, formatPercent } from '../format'
 
@@ -14,7 +13,6 @@ export default function CostsPage() {
     return [today.subtract(6, 'day'), today]
   })
   const [virtualModel, setVirtualModel] = useState('')
-  const [detailID, setDetailID] = useState<string | null>(null)
   const createdFrom = dateRange[0].startOf('day').toISOString()
   const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
   const today = dayjs().startOf('day')
@@ -31,11 +29,6 @@ export default function CostsPage() {
   const modelNames = useQuery({
     queryKey: ['model-names'],
     queryFn: () => api<string[]>('/api/admin/model-names'),
-  })
-  const detail = useQuery({
-    queryKey: ['request-detail', detailID],
-    queryFn: () => api<RequestDetail>(`/api/admin/requests/${detailID}`),
-    enabled: !!detailID,
   })
 
   const summary = usage.data?.summary
@@ -107,7 +100,6 @@ export default function CostsPage() {
         {usage.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : usage.data?.groups.length ? usage.data.groups.map((record) => <UsageCard key={`${record.date}-${record.virtual_model}-${record.upstream_model}`} record={record} />) : <Card><Empty className="py-8" description="所选范围内暂无已完成的用量记录" /></Card>}
       </div>
 
-      <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={() => setDetailID(null)} />
     </div>
   )
 }

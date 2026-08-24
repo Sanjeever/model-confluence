@@ -1,13 +1,14 @@
 import { useState } from 'react'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Button, Card, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Typography, message } from 'antd'
+import { App, Button, Card, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Typography } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type AccessKey, type DeleteResult, type Page } from '../api'
 
 type AccessKeyForm = { name: string; expires_at?: Dayjs | null }
 
 export default function AccessKeysPage() {
+  const { message } = App.useApp()
   const [open, setOpen] = useState(false)
   const [editing, setEditing] = useState<AccessKey | null>(null)
   const [created, setCreated] = useState<AccessKey | null>(null)
