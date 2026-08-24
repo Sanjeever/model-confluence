@@ -7,6 +7,13 @@ export class APIError extends Error {
   }
 }
 
+const unauthorizedListeners = new Set<() => void>()
+
+export function onUnauthorized(listener: () => void): () => void {
+  unauthorizedListeners.add(listener)
+  return () => { unauthorizedListeners.delete(listener) }
+}
+
 function cookie(name: string): string {
   const prefix = `${name}=`
   return document.cookie
@@ -26,6 +33,9 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(path, { ...init, headers, credentials: 'same-origin' })
   if (!response.ok) {
     const payload = await response.json().catch(() => ({ error: response.statusText })) as { error?: string }
+    if (response.status === 401 && path !== '/api/admin/login' && path !== '/api/admin/session') {
+      unauthorizedListeners.forEach((listener) => listener())
+    }
     throw new APIError(response.status, payload.error ?? response.statusText)
   }
   if (response.status === 204) return undefined as T

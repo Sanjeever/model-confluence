@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { Alert, Button, Card, Col, DatePicker, Empty, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type PerformanceOverview, type PerformanceRequest, type RequestDetail } from '../api'
-import RequestDrawer, { protocolName, statusName } from '../components/RequestDrawer'
+import { api, type PerformanceOverview, type PerformanceRequest } from '../api'
+import { protocolName, statusName } from '../components/RequestDrawer'
 
 const statusItems = [
   { key: 'completed', label: '已完成', color: '#4d9b72' },
@@ -18,7 +19,8 @@ export default function PerformancePage() {
     const today = dayjs().startOf('day')
     return [today, today]
   })
-  const [detailID, setDetailID] = useState<string | null>(null)
+  const navigate = useNavigate()
+  const location = useLocation()
   const createdFrom = dateRange[0].startOf('day').toISOString()
   const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
   const today = dayjs().startOf('day')
@@ -28,15 +30,13 @@ export default function PerformancePage() {
     queryFn: () => api<PerformanceOverview>(`/api/admin/performance?created_from=${encodeURIComponent(createdFrom)}&created_to=${encodeURIComponent(createdTo)}`),
     refetchInterval: shouldPoll ? 10000 : false,
   })
-  const detail = useQuery({
-    queryKey: ['request-detail', detailID],
-    queryFn: () => api<RequestDetail>(`/api/admin/requests/${detailID}`),
-    enabled: !!detailID,
-  })
 
   function refresh() {
     performance.refetch()
-    if (detailID) detail.refetch()
+  }
+
+  function openDetail(id: string) {
+    navigate(`/requests/${id}`, { state: { returnTo: location.pathname + location.search } })
   }
 
   const overview = performance.data
@@ -83,7 +83,7 @@ export default function PerformancePage() {
             loading={performance.isPending}
             dataSource={overview?.attention_requests ?? []}
             scroll={{ x: 1180 }}
-            onRow={(record) => ({ onClick: () => setDetailID(record.id), className: 'cursor-pointer' })}
+            onRow={(record) => ({ onClick: () => openDetail(record.id), className: 'cursor-pointer' })}
             pagination={false}
             locale={{ emptyText: <Empty className="py-14" description={overview?.request_count ? '所选范围内没有可关注的请求' : '所选时间范围内暂无请求记录'} /> }}
             columns={[
@@ -101,10 +101,9 @@ export default function PerformancePage() {
       </div>
 
       <div className="mt-4 space-y-3 lg:hidden">
-        {performance.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : (overview?.attention_requests ?? []).length ? (overview?.attention_requests ?? []).map((record) => <AttentionCard key={record.id} record={record} onClick={() => setDetailID(record.id)} />) : <Card><Empty className="py-8" description={overview?.request_count ? '所选范围内没有可关注的请求' : '所选时间范围内暂无请求记录'} /></Card>}
+        {performance.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : (overview?.attention_requests ?? []).length ? (overview?.attention_requests ?? []).map((record) => <AttentionCard key={record.id} record={record} onClick={() => openDetail(record.id)} />) : <Card><Empty className="py-8" description={overview?.request_count ? '所选范围内没有可关注的请求' : '所选时间范围内暂无请求记录'} /></Card>}
       </div>
 
-      <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={() => setDetailID(null)} />
     </div>
   )
 }

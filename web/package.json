@@ -16,7 +16,8 @@
     "dayjs": "^1.11.21",
     "react": "^19.2.8",
     "react-dom": "^19.2.8",
-    "react-json-view-lite": "2.5.0"
+    "react-json-view-lite": "2.5.0",
+    "react-router-dom": "^7.18.2"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.3.3",

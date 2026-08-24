@@ -1,40 +1,52 @@
 import { useState } from 'react'
-import { useQueryClient } from '@tanstack/react-query'
-import { Button, Drawer, Layout, Menu, Switch } from 'antd'
-import { ApiOutlined, BranchesOutlined, DashboardOutlined, DatabaseOutlined, FundOutlined, KeyOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined, HeartOutlined } from '@ant-design/icons'
+import { App, Button, Drawer, Form, Input, Layout, Menu, Modal, Switch } from 'antd'
+import { ApiOutlined, BranchesOutlined, DashboardOutlined, DatabaseOutlined, FundOutlined, KeyOutlined, LockOutlined, LogoutOutlined, MenuFoldOutlined, MenuOutlined, MenuUnfoldOutlined, MoonOutlined, SunOutlined, HeartOutlined } from '@ant-design/icons'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { api } from '../api'
-import OverviewPage from './OverviewPage'
-import PerformancePage from './PerformancePage'
-import CostsPage from './CostsPage'
-import HealthPage from './HealthPage'
-import AccessKeysPage from './AccessKeysPage'
-import ProvidersPage from './ProvidersPage'
-import ModelsPage from './ModelsPage'
 
 const { Sider, Content } = Layout
 
-type Page = 'performance' | 'overview' | 'costs' | 'health' | 'keys' | 'providers' | 'models'
+type PasswordForm = { current_password: string; new_password: string; confirm_password: string }
 
 const menuItems = [
-  { key: 'performance', icon: <DashboardOutlined />, label: '性能监控' },
-  { key: 'overview', icon: <DatabaseOutlined />, label: '使用记录' },
-  { key: 'costs', icon: <FundOutlined />, label: '用量统计' },
-  { key: 'health', icon: <HeartOutlined />, label: '上游健康' },
-  { key: 'keys', icon: <KeyOutlined />, label: '访问密钥' },
-  { key: 'providers', icon: <ApiOutlined />, label: '供应商' },
-  { key: 'models', icon: <BranchesOutlined />, label: '模型路由' },
+  { key: '/performance', icon: <DashboardOutlined />, label: '性能监控' },
+  { key: '/requests', icon: <DatabaseOutlined />, label: '使用记录' },
+  { key: '/usage', icon: <FundOutlined />, label: '用量统计' },
+  { key: '/health', icon: <HeartOutlined />, label: '上游健康' },
+  { key: '/access-keys', icon: <KeyOutlined />, label: '访问密钥' },
+  { key: '/providers', icon: <ApiOutlined />, label: '供应商' },
+  { key: '/models', icon: <BranchesOutlined />, label: '模型路由' },
 ]
 
-export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; onThemeChange: (value: boolean) => void }) {
-  const [page, setPage] = useState<Page>('performance')
+export default function ConsoleLayout({ dark, onThemeChange, onSignedOut }: { dark: boolean; onThemeChange: (value: boolean) => void; onSignedOut: () => void }) {
   const [collapsed, setCollapsed] = useState(false)
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
-  const queryClient = useQueryClient()
+  const [passwordOpen, setPasswordOpen] = useState(false)
+  const [passwordSaving, setPasswordSaving] = useState(false)
+  const [passwordForm] = Form.useForm<PasswordForm>()
+  const navigate = useNavigate()
+  const location = useLocation()
+  const { message } = App.useApp()
+  const selectedPath = location.pathname.startsWith('/requests/') ? '/requests' : location.pathname
 
   async function logout() {
     await api('/api/admin/logout', { method: 'POST' })
-    queryClient.clear()
-    location.reload()
+    onSignedOut()
+  }
+
+  async function changePassword(values: PasswordForm) {
+    setPasswordSaving(true)
+    try {
+      await api('/api/admin/change-password', { method: 'POST', body: JSON.stringify({ current_password: values.current_password, new_password: values.new_password }) })
+      message.success('密码已修改，请重新登录')
+      setPasswordOpen(false)
+      passwordForm.resetFields()
+      onSignedOut()
+    } catch (error) {
+      message.error(error instanceof Error ? error.message : '无法修改密码')
+    } finally {
+      setPasswordSaving(false)
+    }
   }
 
   return (
@@ -54,8 +66,8 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
               mode="inline"
               inlineCollapsed={collapsed}
               style={{ background: 'transparent' }}
-              selectedKeys={[page]}
-              onSelect={({ key }) => setPage(key as Page)}
+              selectedKeys={[selectedPath]}
+              onSelect={({ key }) => navigate(key)}
               items={menuItems}
             />
           </div>
@@ -64,6 +76,7 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
               {!collapsed && <span>外观</span>}
               <Switch checked={dark} onChange={onThemeChange} checkedChildren={<MoonOutlined />} unCheckedChildren={<SunOutlined />} />
             </div>
+            <Button type="text" icon={<LockOutlined />} onClick={() => setPasswordOpen(true)} block>{collapsed ? null : '修改密码'}</Button>
             <Button type="text" danger icon={<LogoutOutlined />} onClick={logout} block>{collapsed ? null : '退出登录'}</Button>
           </div>
         </div>
@@ -77,13 +90,7 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
           <Button type="text" icon={<MenuOutlined />} aria-label="打开导航" onClick={() => setMobileMenuOpen(true)} />
         </header>
         <Content className="mc-grid min-h-[calc(100dvh-64px)] overflow-visible p-4 sm:p-6 lg:min-h-0 lg:overflow-y-auto lg:p-8">
-          {page === 'performance' && <PerformancePage />}
-          {page === 'overview' && <OverviewPage />}
-          {page === 'costs' && <CostsPage />}
-          {page === 'health' && <HealthPage />}
-          {page === 'keys' && <AccessKeysPage />}
-          {page === 'providers' && <ProvidersPage />}
-          {page === 'models' && <ModelsPage />}
+          <Outlet />
         </Content>
       </Layout>
       <Drawer title="模汇" placement="left" size={280} open={mobileMenuOpen} onClose={() => setMobileMenuOpen(false)} rootClassName="lg:hidden" styles={{ body: { padding: 0 } }}>
@@ -92,10 +99,10 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
             theme={dark ? 'dark' : 'light'}
             mode="inline"
             style={{ background: 'transparent', borderInlineEnd: 0 }}
-            selectedKeys={[page]}
+            selectedKeys={[selectedPath]}
             items={menuItems}
             onSelect={({ key }) => {
-              setPage(key as Page)
+              navigate(key)
               setMobileMenuOpen(false)
             }}
           />
@@ -104,10 +111,18 @@ export default function ConsoleLayout({ dark, onThemeChange }: { dark: boolean; 
               <span>外观</span>
               <Switch checked={dark} onChange={onThemeChange} checkedChildren={<MoonOutlined />} unCheckedChildren={<SunOutlined />} />
             </div>
+            <Button type="text" icon={<LockOutlined />} onClick={() => { setMobileMenuOpen(false); setPasswordOpen(true) }} block>修改密码</Button>
             <Button type="text" danger icon={<LogoutOutlined />} onClick={logout} block>退出登录</Button>
           </div>
         </div>
       </Drawer>
+      <Modal title="修改管理员密码" open={passwordOpen} onCancel={() => { setPasswordOpen(false); passwordForm.resetFields() }} onOk={() => passwordForm.submit()} confirmLoading={passwordSaving} okText="修改密码" cancelText="取消" destroyOnHidden>
+        <Form form={passwordForm} layout="vertical" onFinish={changePassword} className="pt-4" requiredMark={false}>
+          <Form.Item name="current_password" label="当前密码" rules={[{ required: true, message: '请输入当前密码' }]}><Input.Password autoComplete="current-password" /></Form.Item>
+          <Form.Item name="new_password" label="新密码" rules={[{ required: true, message: '请输入新密码' }, { min: 12, message: '新密码至少需要 12 个字符' }]}><Input.Password autoComplete="new-password" /></Form.Item>
+          <Form.Item name="confirm_password" label="确认新密码" dependencies={['new_password']} rules={[{ required: true, message: '请再次输入新密码' }, ({ getFieldValue }) => ({ validator: (_, value) => !value || value === getFieldValue('new_password') ? Promise.resolve() : Promise.reject(new Error('两次输入的新密码不一致')) })]}><Input.Password autoComplete="new-password" /></Form.Item>
+        </Form>
+      </Modal>
     </Layout>
   )
 }

@@ -1,16 +1,17 @@
 import { useState } from 'react'
-import { Button, Form, Input, message } from 'antd'
+import { App, Button, Form, Input } from 'antd'
 import { ArrowRightOutlined, LockOutlined } from '@ant-design/icons'
 import { api } from '../api'
 
-export default function LoginPage({ onAuthenticated }: { onAuthenticated: () => void }) {
+export default function LoginPage({ onAuthenticated }: { onAuthenticated: () => Promise<void> }) {
   const [loading, setLoading] = useState(false)
+  const { message } = App.useApp()
 
   async function submit(values: { password: string }) {
     setLoading(true)
     try {
       await api('/api/admin/login', { method: 'POST', body: JSON.stringify(values) })
-      onAuthenticated()
+      await onAuthenticated()
     } catch (error) {
       message.error(error instanceof Error ? error.message : '登录失败')
     } finally {

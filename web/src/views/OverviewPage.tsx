@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { Button, Card, Col, DatePicker, Empty, Input, Pagination, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -21,7 +22,9 @@ export default function OverviewPage() {
   })
   const [requestIDInput, setRequestIDInput] = useState('')
   const [requestID, setRequestID] = useState('')
-  const [detailID, setDetailID] = useState<string | null>(null)
+  const { detailID } = useParams<{ detailID: string }>()
+  const location = useLocation()
+  const navigate = useNavigate()
   const queryClient = useQueryClient()
   const createdFrom = dateRange[0].startOf('day').toISOString()
   const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
@@ -56,6 +59,15 @@ export default function OverviewPage() {
     if (detailID) detail.refetch()
   }
 
+  function openDetail(id: string) {
+    navigate(`/requests/${id}`, { state: { returnTo: location.pathname + location.search } })
+  }
+
+  function closeDetail() {
+    const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
+    navigate(returnTo ?? '/requests')
+  }
+
   return (
     <div className="mc-enter mx-auto max-w-[1500px]">
       <div className="mb-6 flex flex-col gap-4 sm:mb-10 lg:flex-row lg:items-end lg:justify-between">
@@ -84,7 +96,7 @@ export default function OverviewPage() {
           loading={requests.isPending}
           dataSource={requests.data?.items ?? []}
           scroll={{ x: 1380, y: 'calc(100vh - 430px)' }}
-          onRow={(record) => ({ onClick: () => setDetailID(record.id), className: 'cursor-pointer' })}
+          onRow={(record) => ({ onClick: () => openDetail(record.id), className: 'cursor-pointer' })}
           pagination={{ current: page, pageSize, total: requests.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }}
           locale={{ emptyText: <Empty className="py-14" description={requestID ? '没有匹配该请求 ID 的记录' : '所选时间范围内暂无请求记录'} /> }}
           columns={[
@@ -97,14 +109,14 @@ export default function OverviewPage() {
             { title: '首内容', dataIndex: 'first_content_ms', width: 100, align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
             { title: '总耗时', dataIndex: 'total_ms', width: 100, align: 'right', render: (value) => value == null ? '—' : `${value} ms` },
             { title: '状态', dataIndex: 'status', width: 160, align: 'right', render: (value, record) => <Space size={4} wrap><Tag color={value === 'completed' ? 'success' : value === 'in_progress' ? 'processing' : 'error'}>{statusName(value)}</Tag>{record.payload_pruned && <Tag>载荷已清理</Tag>}</Space> },
-            { title: '', width: 48, render: (_, record) => <Button type="text" icon={<EyeOutlined />} aria-label={`查看 ${record.id}`} onClick={(event) => { event.stopPropagation(); setDetailID(record.id) }} /> },
+            { title: '', width: 48, render: (_, record) => <Button type="text" icon={<EyeOutlined />} aria-label={`查看 ${record.id}`} onClick={(event) => { event.stopPropagation(); openDetail(record.id) }} /> },
           ]}
           />
         </Card>
       </div>
       <div className="mt-6 space-y-3 lg:hidden">
         {requests.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : (requests.data?.items ?? []).length ? (requests.data?.items ?? []).map((record) => (
-          <Card key={record.id} size="small" className="cursor-pointer" onClick={() => setDetailID(record.id)}>
+          <Card key={record.id} size="small" className="cursor-pointer" onClick={() => openDetail(record.id)}>
             <div className="mb-3 flex items-start justify-between gap-3">
               <div className="min-w-0">
                 <div className="text-xs text-[#7c8d86]">{new Date(record.created_at).toLocaleString()}</div>
@@ -126,7 +138,7 @@ export default function OverviewPage() {
         )) : <Card><Empty className="py-8" description={requestID ? '没有匹配该请求 ID 的记录' : '所选时间范围内暂无请求记录'} /></Card>}
         {!!requests.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={requests.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
-      <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={() => setDetailID(null)} />
+      <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={closeDetail} />
     </div>
   )
 }
