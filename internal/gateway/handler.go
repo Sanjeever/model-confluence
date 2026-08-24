@@ -128,6 +128,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	}
 
 	position := 0
+	var invalidResponseErr error
 	for index := 0; index < len(routes); index++ {
 		route := routes[index]
 		var upstreamBody []byte
@@ -201,16 +202,24 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 
 		_ = h.store.TouchUpstreamKey(route.Key.ID)
 		if requestMeta.Stream {
-			h.proxyStream(w, r.Context(), response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
+			err = h.proxyStream(w, r.Context(), response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
+		} else {
+			err = h.proxyBuffered(w, response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
+		}
+		if err == nil {
 			return
 		}
-		h.proxyBuffered(w, response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
+		invalidResponseErr = err
+		index = skipCandidate(routes, index, route.CandidateID)
+	}
+	if invalidResponseErr != nil {
+		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadGateway, "invalid_upstream_response", invalidResponseErr.Error())
 		return
 	}
 	h.finishError(w, inboundProtocol, requestID, started, http.StatusServiceUnavailable, "upstream_unavailable", "所有可用密钥或候选均调用失败")
 }
 
-func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) {
+func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) error {
 	defer response.Body.Close()
 	var body io.Reader = response.Body
 	if h.streamIdleTimeout > 0 {
@@ -219,8 +228,7 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 	rawBody, err := io.ReadAll(body)
 	if err != nil {
 		h.completeAttemptFailure(attemptID, attemptStarted, err)
-		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadGateway, "upstream_read_error", err.Error())
-		return
+		return err
 	}
 	var clientBody []byte
 	if upstreamProtocol == inboundProtocol {
@@ -230,8 +238,7 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 	}
 	if err != nil {
 		h.completeAttemptFailure(attemptID, attemptStarted, err)
-		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadGateway, "invalid_upstream_response", err.Error())
-		return
+		return err
 	}
 	usage, rawUsage, usageErr := protocol.ExtractUsage(rawBody, upstreamProtocol, false)
 	copyResponseHeaders(w.Header(), response.Header)
@@ -248,16 +255,15 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 	total := time.Since(started).Milliseconds()
 	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: rawBody, RawUsageJSON: rawUsage, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: errorMessage, CompletedAt: time.Now().UTC()})
 	h.store.CompleteRequest(requestResult(requestID, status, response.StatusCode, marshalHeaders(w.Header()), clientBody, nil, total, errorMessage, usage))
+	return nil
 }
 
-func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) {
+func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) error {
 	var body io.ReadCloser = response.Body
 	if h.streamIdleTimeout > 0 {
 		body = newIdleTimeoutReader(response.Body, h.streamIdleTimeout)
 	}
 	defer body.Close()
-	copyResponseHeaders(w.Header(), response.Header)
-	w.Header().Del("Content-Length")
 	if upstreamProtocol != inboundProtocol {
 		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 	}
@@ -269,20 +275,19 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 	status := "completed"
 	errorMessage := ""
 	clientResponseStatus := response.StatusCode
+	committed := false
 	if upstreamProtocol == inboundProtocol {
+		copyResponseHeaders(w.Header(), response.Header)
+		w.Header().Del("Content-Length")
 		w.WriteHeader(response.StatusCode)
+		committed = true
 		status, errorMessage = proxyPassthroughEvents(w, ctx, reader, flusher, virtualModel, started, &upstreamLog, &clientLog, &firstContent)
 	} else {
 		converter, err := protocol.NewStreamConverter(upstreamProtocol, inboundProtocol, virtualModel)
-		committed := false
 		if err != nil {
 			status, errorMessage = "failed", err.Error()
 		} else {
-			status, errorMessage, committed = proxyConvertedEvents(w, ctx, reader, flusher, converter, response.StatusCode, started, &upstreamLog, &clientLog, &firstContent)
-		}
-		if status == "failed" && !committed {
-			clientResponseStatus = http.StatusBadGateway
-			clientLog.Write(h.writeError(w, inboundProtocol, clientResponseStatus, "invalid_upstream_response", errorMessage, requestID))
+			status, errorMessage, committed = proxyConvertedEvents(w, ctx, reader, flusher, converter, response.StatusCode, response.Header, started, &upstreamLog, &clientLog, &firstContent)
 		}
 	}
 	usage, rawUsage, usageErr := protocol.ExtractUsage(upstreamLog.Bytes(), upstreamProtocol, true)
@@ -291,7 +296,11 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 	}
 	total := time.Since(started).Milliseconds()
 	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: upstreamLog.Bytes(), RawUsageJSON: rawUsage, FirstByteMS: &firstByte, FirstContentMS: firstContent, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: errorMessage, CompletedAt: time.Now().UTC()})
+	if status == "failed" && !committed {
+		return errors.New(errorMessage)
+	}
 	h.store.CompleteRequest(requestResult(requestID, status, clientResponseStatus, marshalHeaders(w.Header()), clientLog.Bytes(), firstContent, total, errorMessage, usage))
+	return nil
 }
 
 func requestResult(id, status string, responseStatus int, headers string, body []byte, firstContent *int64, total int64, errorMessage string, usage protocol.Usage) store.RequestResult {
@@ -343,7 +352,7 @@ func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *
 	}
 }
 
-func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, flusher http.Flusher, converter *protocol.StreamConverter, responseStatus int, started time.Time, upstreamLog, clientLog *bytes.Buffer, firstContent **int64) (string, string, bool) {
+func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, flusher http.Flusher, converter *protocol.StreamConverter, responseStatus int, responseHeaders http.Header, started time.Time, upstreamLog, clientLog *bytes.Buffer, firstContent **int64) (string, string, bool) {
 	committed := false
 	for {
 		event, err := protocol.ReadSSEEvent(reader)
@@ -359,6 +368,8 @@ func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bu
 			}
 			for _, chunk := range chunks {
 				if !committed {
+					copyResponseHeaders(w.Header(), responseHeaders)
+					w.Header().Del("Content-Length")
 					w.WriteHeader(responseStatus)
 					committed = true
 				}

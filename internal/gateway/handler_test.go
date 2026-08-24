@@ -47,7 +47,7 @@ func TestProxyConvertedEventsDelaysCommitBeforeConversionError(t *testing.T) {
 	var upstreamLog, clientLog bytes.Buffer
 	var firstContent *int64
 
-	status, message, committed := proxyConvertedEvents(w, context.Background(), bufio.NewReader(strings.NewReader(stream)), nil, converter, http.StatusOK, time.Now(), &upstreamLog, &clientLog, &firstContent)
+	status, message, committed := proxyConvertedEvents(w, context.Background(), bufio.NewReader(strings.NewReader(stream)), nil, converter, http.StatusOK, nil, time.Now(), &upstreamLog, &clientLog, &firstContent)
 
 	if status != "failed" || message != `unsupported Messages stream block "image"` {
 		t.Fatalf("unexpected result: status=%q message=%q", status, message)
