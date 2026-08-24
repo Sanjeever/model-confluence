@@ -191,6 +191,9 @@ func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
 	}
 	defer tx.Rollback()
 	now := time.Now().UTC()
+	if _, err := tx.Exec(`UPDATE providers SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, formatTime(now), input.Name); err != nil {
+		return Provider{}, err
+	}
 	result, err := tx.Exec(`INSERT INTO providers (name, enabled, auth_type, auth_header, static_headers_json, quota_codes_json, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?)`, input.Name, input.AuthType, nullableString(input.AuthHeader), string(staticHeaders), string(quotaCodes), formatTime(now), formatTime(now))
 	if err != nil {
 		return Provider{}, err
@@ -238,6 +241,9 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 	}
 	defer tx.Rollback()
 	now := formatTime(time.Now())
+	if _, err := tx.Exec(`UPDATE providers SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, now, input.Name); err != nil {
+		return err
+	}
 	result, err := tx.Exec(`UPDATE providers SET name = ?, auth_type = ?, auth_header = ?, static_headers_json = ?, quota_codes_json = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL`, input.Name, input.AuthType, nullableString(input.AuthHeader), string(staticHeaders), string(quotaCodes), now, id)
 	if err != nil {
 		return err
@@ -270,7 +276,7 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE upstream_keys SET position = -id WHERE provider_id = ? AND archived_at IS NULL`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE upstream_keys SET position = -id WHERE provider_id = ?`, id); err != nil {
 		return err
 	}
 	for position, key := range input.Keys {
@@ -582,6 +588,9 @@ func (s *Store) CreateVirtualModel(input CreateVirtualModelInput) (VirtualModel,
 		return VirtualModel{}, err
 	}
 	now := time.Now().UTC()
+	if _, err := tx.Exec(`UPDATE virtual_models SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, formatTime(now), input.Name); err != nil {
+		return VirtualModel{}, err
+	}
 	result, err := tx.Exec(`INSERT INTO virtual_models (name, enabled, created_at, updated_at) VALUES (?, 1, ?, ?)`, input.Name, formatTime(now), formatTime(now))
 	if err != nil {
 		return VirtualModel{}, err
@@ -629,6 +638,9 @@ func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) erro
 		return err
 	}
 	now := formatTime(time.Now())
+	if _, err := tx.Exec(`UPDATE virtual_models SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, now, input.Name); err != nil {
+		return err
+	}
 	result, err := tx.Exec(`UPDATE virtual_models SET name = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL`, input.Name, now, id)
 	if err != nil {
 		return err
@@ -644,7 +656,7 @@ func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) erro
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(`UPDATE model_candidates SET position = -id WHERE virtual_model_id = ? AND archived_at IS NULL`, id); err != nil {
+	if _, err := tx.Exec(`UPDATE model_candidates SET position = -id WHERE virtual_model_id = ?`, id); err != nil {
 		return err
 	}
 	for position, candidate := range input.Candidates {
