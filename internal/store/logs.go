@@ -2,7 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"errors"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/protocol"
@@ -107,20 +106,23 @@ func (s *Store) CompleteRequest(result RequestResult) error {
 	if err != nil {
 		return err
 	}
-	upstreamModel, providerName, err := s.finalAttemptRoute(result.ID)
-	if err != nil {
-		return err
-	}
-	_, err = s.db.Exec(`UPDATE requests SET status = ?, response_status = ?, response_headers = ?, response_body = ?, response_body_encoding = ?, input_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?, first_content_ms = ?, total_ms = ?, error_message = ?, completed_at = ?, upstream_model = ?, provider_name = ? WHERE id = ?`, result.Status, nullableInt(result.ResponseStatus), nullableString(result.ResponseHeaders), body, encoding, result.InputTokens, result.CacheReadTokens, result.CacheWriteTokens, result.OutputTokens, result.ReasoningTokens, result.TotalTokens, result.FirstContentMS, result.TotalMS, nullableString(result.ErrorMessage), formatTime(result.CompletedAt), nullableString(upstreamModel), nullableString(providerName), result.ID)
+	_, err = s.db.Exec(`
+WITH final_attempt AS (
+  SELECT upstream_model, provider_name
+  FROM attempts
+  WHERE request_id = ? AND status = 'completed'
+  ORDER BY position DESC
+  LIMIT 1
+)
+UPDATE requests SET
+  status = ?, response_status = ?, response_headers = ?, response_body = ?, response_body_encoding = ?,
+  input_tokens = ?, cache_read_tokens = ?, cache_write_tokens = ?, output_tokens = ?, reasoning_tokens = ?, total_tokens = ?,
+  first_content_ms = ?, total_ms = ?, error_message = ?, completed_at = ?,
+  upstream_model = (SELECT upstream_model FROM final_attempt),
+  provider_name = (SELECT provider_name FROM final_attempt)
+WHERE id = ?
+`, result.ID, result.Status, nullableInt(result.ResponseStatus), nullableString(result.ResponseHeaders), body, encoding, result.InputTokens, result.CacheReadTokens, result.CacheWriteTokens, result.OutputTokens, result.ReasoningTokens, result.TotalTokens, result.FirstContentMS, result.TotalMS, nullableString(result.ErrorMessage), formatTime(result.CompletedAt), result.ID)
 	return err
-}
-
-func (s *Store) finalAttemptRoute(requestID string) (upstreamModel, providerName string, err error) {
-	err = s.db.QueryRow(`SELECT COALESCE(upstream_model, ''), COALESCE(provider_name, '') FROM attempts WHERE request_id = ? AND status = 'completed' ORDER BY position DESC LIMIT 1`, requestID).Scan(&upstreamModel, &providerName)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", "", nil
-	}
-	return upstreamModel, providerName, err
 }
 
 func (s *Store) CreateSecurityEvent(eventType, clientIP, userAgent, endpoint, reason string) error {
