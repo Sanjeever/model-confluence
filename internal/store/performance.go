@@ -2,8 +2,6 @@ package store
 
 import (
 	"database/sql"
-	"math"
-	"sort"
 	"time"
 )
 
@@ -46,62 +44,91 @@ type PerformanceRequest struct {
 
 func (s *Store) PerformanceOverview(createdFrom, createdTo time.Time) (PerformanceOverview, error) {
 	result := PerformanceOverview{AttentionRequests: []PerformanceRequest{}}
-	var firstContentValues []int64
-	var totalValues []int64
 	var terminalCount int
-
-	rows, err := s.db.Query(`
-SELECT status, first_content_ms, total_ms
+	err := s.db.QueryRow(`
+SELECT
+  COUNT(*),
+  COALESCE(SUM(status = 'completed'), 0),
+  COALESCE(SUM(status = 'failed'), 0),
+  COALESCE(SUM(status = 'cancelled'), 0),
+  COALESCE(SUM(status = 'in_progress'), 0)
 FROM requests
 WHERE created_at >= ? AND created_at < ?
-`, formatTime(createdFrom), formatTime(createdTo))
+`, formatTime(createdFrom), formatTime(createdTo)).Scan(
+		&result.RequestCount,
+		&result.StatusCounts.Completed,
+		&result.StatusCounts.Failed,
+		&result.StatusCounts.Cancelled,
+		&result.StatusCounts.InProgress,
+	)
 	if err != nil {
 		return PerformanceOverview{}, err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
-		var status string
-		var firstContent, total sql.NullInt64
-		if err := rows.Scan(&status, &firstContent, &total); err != nil {
-			return PerformanceOverview{}, err
-		}
-		result.RequestCount++
-		switch status {
-		case "completed":
-			result.StatusCounts.Completed++
-			terminalCount++
-			if firstContent.Valid {
-				firstContentValues = append(firstContentValues, firstContent.Int64)
-			}
-			if total.Valid {
-				totalValues = append(totalValues, total.Int64)
-			}
-		case "failed":
-			result.StatusCounts.Failed++
-			terminalCount++
-		case "cancelled":
-			result.StatusCounts.Cancelled++
-			terminalCount++
-		case "in_progress":
-			result.StatusCounts.InProgress++
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return PerformanceOverview{}, err
-	}
-
+	terminalCount = result.StatusCounts.Completed + result.StatusCounts.Failed + result.StatusCounts.Cancelled
 	if terminalCount > 0 {
 		successRate := float64(result.StatusCounts.Completed) / float64(terminalCount)
 		result.SuccessRate = &successRate
 	}
-	result.FirstContentLatency = performanceLatencyStats(firstContentValues)
-	result.TotalLatency = performanceLatencyStats(totalValues)
+	result.FirstContentLatency, result.TotalLatency, err = s.performanceLatencyStats(createdFrom, createdTo)
+	if err != nil {
+		return PerformanceOverview{}, err
+	}
 	result.AttentionRequests, err = s.performanceAttentionRequests(createdFrom, createdTo)
 	if err != nil {
 		return PerformanceOverview{}, err
 	}
 	return result, nil
+}
+
+func (s *Store) performanceLatencyStats(createdFrom, createdTo time.Time) (PerformanceLatencyStats, PerformanceLatencyStats, error) {
+	rows, err := s.db.Query(`
+WITH latency(metric, value) AS (
+  SELECT 'first_content', first_content_ms
+  FROM requests
+  WHERE created_at >= ? AND created_at < ? AND status = 'completed' AND first_content_ms IS NOT NULL
+  UNION ALL
+  SELECT 'total', total_ms
+  FROM requests
+  WHERE created_at >= ? AND created_at < ? AND status = 'completed' AND total_ms IS NOT NULL
+), ranked AS (
+  SELECT
+    metric,
+    value,
+    ROW_NUMBER() OVER (PARTITION BY metric ORDER BY value) AS row_number,
+    COUNT(*) OVER (PARTITION BY metric) AS sample_count
+  FROM latency
+)
+SELECT
+  metric,
+  MAX(CASE WHEN row_number = (sample_count + 1) / 2 THEN value END),
+  MAX(CASE WHEN row_number = (95 * sample_count + 99) / 100 THEN value END),
+  MAX(sample_count)
+FROM ranked
+GROUP BY metric
+`, formatTime(createdFrom), formatTime(createdTo), formatTime(createdFrom), formatTime(createdTo))
+	if err != nil {
+		return PerformanceLatencyStats{}, PerformanceLatencyStats{}, err
+	}
+	defer rows.Close()
+	var firstContent, total PerformanceLatencyStats
+	for rows.Next() {
+		var metric string
+		var p50, p95 sql.NullInt64
+		var sampleCount int
+		if err := rows.Scan(&metric, &p50, &p95, &sampleCount); err != nil {
+			return PerformanceLatencyStats{}, PerformanceLatencyStats{}, err
+		}
+		stats := PerformanceLatencyStats{P50: nullableInt64Pointer(p50), P95: nullableInt64Pointer(p95), SampleCount: sampleCount}
+		if metric == "first_content" {
+			firstContent = stats
+		} else {
+			total = stats
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return PerformanceLatencyStats{}, PerformanceLatencyStats{}, err
+	}
+	return firstContent, total, nil
 }
 
 func (s *Store) performanceAttentionRequests(createdFrom, createdTo time.Time) ([]PerformanceRequest, error) {
@@ -154,22 +181,4 @@ LIMIT 8
 		result = append(result, item)
 	}
 	return result, rows.Err()
-}
-
-func performanceLatencyStats(values []int64) PerformanceLatencyStats {
-	if len(values) == 0 {
-		return PerformanceLatencyStats{}
-	}
-	sort.Slice(values, func(i, j int) bool { return values[i] < values[j] })
-	return PerformanceLatencyStats{
-		P50:         percentileValue(values, 0.50),
-		P95:         percentileValue(values, 0.95),
-		SampleCount: len(values),
-	}
-}
-
-func percentileValue(values []int64, percentile float64) *int64 {
-	index := int(math.Ceil(percentile*float64(len(values)))) - 1
-	value := values[index]
-	return &value
 }
