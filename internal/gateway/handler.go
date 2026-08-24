@@ -384,9 +384,6 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 		body = newIdleTimeoutReader(response.Body, h.streamIdleTimeout)
 	}
 	defer body.Close()
-	if upstreamProtocol != inboundProtocol {
-		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-	}
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, _ := w.(http.Flusher)
 	reader := bufio.NewReader(body)
@@ -490,6 +487,7 @@ func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bu
 				if !committed {
 					copyResponseHeaders(w.Header(), responseHeaders)
 					w.Header().Del("Content-Length")
+					w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 					w.WriteHeader(responseStatus)
 					committed = true
 				}
