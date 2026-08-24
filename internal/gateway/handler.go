@@ -21,10 +21,11 @@ import (
 )
 
 type Handler struct {
-	store    *store.Store
-	clientIP *httpx.ClientIPResolver
-	maxBody  int64
-	client   *http.Client
+	store             *store.Store
+	clientIP          *httpx.ClientIPResolver
+	maxBody           int64
+	streamIdleTimeout time.Duration
+	client            *http.Client
 }
 
 func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.ClientIPResolver) *Handler {
@@ -33,7 +34,7 @@ func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.Client
 		Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
 		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout, IdleConnTimeout: 90 * time.Second,
 	}
-	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, client: &http.Client{Transport: transport}}
+	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, client: &http.Client{Transport: transport}}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -211,7 +212,11 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 
 func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) {
 	defer response.Body.Close()
-	rawBody, err := io.ReadAll(response.Body)
+	var body io.Reader = response.Body
+	if h.streamIdleTimeout > 0 {
+		body = newIdleTimeoutReader(response.Body, h.streamIdleTimeout)
+	}
+	rawBody, err := io.ReadAll(body)
 	if err != nil {
 		h.completeAttemptFailure(attemptID, attemptStarted, err)
 		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadGateway, "upstream_read_error", err.Error())
@@ -246,7 +251,11 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 }
 
 func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) {
-	defer response.Body.Close()
+	var body io.ReadCloser = response.Body
+	if h.streamIdleTimeout > 0 {
+		body = newIdleTimeoutReader(response.Body, h.streamIdleTimeout)
+	}
+	defer body.Close()
 	copyResponseHeaders(w.Header(), response.Header)
 	w.Header().Del("Content-Length")
 	if upstreamProtocol != inboundProtocol {
@@ -254,7 +263,7 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 	}
 	w.Header().Set("X-Accel-Buffering", "no")
 	flusher, _ := w.(http.Flusher)
-	reader := bufio.NewReader(response.Body)
+	reader := bufio.NewReader(body)
 	var upstreamLog, clientLog bytes.Buffer
 	var firstContent *int64
 	status := "completed"

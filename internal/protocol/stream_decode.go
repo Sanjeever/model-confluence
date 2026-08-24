@@ -383,7 +383,8 @@ func (d *streamDecoder) decodeResponses(input SSEEvent) ([]streamEvent, error) {
 	case "error":
 		return nil, fmt.Errorf("Responses stream returned an error: %s", input.Data)
 	case "response.content_part.added", "response.content_part.done", "response.output_text.done", "response.function_call_arguments.done",
-		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done", "response.reasoning_summary_text.done", "response.reasoning_text.done":
+		"response.reasoning_summary_part.added", "response.reasoning_summary_part.done", "response.reasoning_summary_text.done", "response.reasoning_text.done",
+		"response.output_text.annotation.added", "response.output_text.annotation.done":
 		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported Responses stream event %q", eventType)
