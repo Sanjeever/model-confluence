@@ -67,7 +67,7 @@ export default function OverviewPage() {
 
   function closeDetail() {
     const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
-    navigate(returnTo ?? '/requests')
+    navigate(returnTo ?? '/requests', { replace: true })
   }
 
   return (
