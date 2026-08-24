@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { App, Button, Card, Collapse, Empty, Form, Input, InputNumber, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
+import { App, Button, Collapse, Empty, Form, Input, InputNumber, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Tooltip, Typography } from 'antd'
 import { ArrowDownOutlined, ArrowUpOutlined, DeleteOutlined, EditOutlined, ExperimentOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type CandidateProtocol, type DeleteResult, type ModelTestResult, type Page, type ProviderOption, type VirtualModel } from '../api'
 import JsonPayload from '../components/JsonPayload'
@@ -119,7 +119,7 @@ export default function ModelsPage() {
         <Input.Search allowClear enterButton="搜索" placeholder="搜索虚拟模型" className="min-w-0 sm:max-w-[360px]" value={nameInput} onChange={(event) => { const value = event.target.value; setNameInput(value); if (!value) { setName(''); setPage(1) } }} onSearch={(value) => { setName(value.trim()); setPage(1) }} />
         <Select allowClear placeholder="状态" className="w-full sm:w-[140px]" value={enabled || undefined} onChange={(value) => { setEnabled(value ?? ''); setPage(1) }} options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
       </div>
-      <div className="hidden lg:block">
+      <div>
         <Table rowKey="id" loading={models.isPending} dataSource={models.data?.items ?? []} scroll={{ x: 900, y: 'calc(100vh - 330px)' }} pagination={{ current: page, pageSize, total: models.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }} locale={{ emptyText: <Empty className="py-14" description={name || enabled ? '没有匹配的模型路由' : '暂无模型路由'} /> }} expandable={{ expandedRowRender: (model) => <ModelCandidates model={model} /> }} columns={[
           { title: '虚拟模型', dataIndex: 'name', render: (value) => <code className="text-sm font-medium">{value}</code> },
           { title: '候选', dataIndex: 'candidates', render: (value) => `${value.length} 条有序路由` },
@@ -127,23 +127,6 @@ export default function ModelsPage() {
           { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
           { title: '操作', width: 148, align: 'right', render: (_, record) => <Space size={4}><Tooltip title={record.enabled ? '测试模型' : '启用后可测试'}><span><Button type="text" icon={<ExperimentOutlined />} aria-label={`测试 ${record.name}`} disabled={!record.enabled} onClick={() => testModel(record)} /></span></Tooltip><Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${record.name}`} onClick={() => editModel(record)} /><Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${record.name}`} /></Popconfirm></Space> },
         ]} />
-      </div>
-      <div className="space-y-3 lg:hidden">
-        {models.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : models.data?.items.length ? models.data.items.map((model) => (
-          <Card key={model.id} size="small">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="min-w-0"><code className="break-all text-sm font-medium">{model.name}</code><div className="mt-1 text-xs text-[#7c8d86]">{model.candidates.length} 条有序路由 · {model.candidates[0]?.provider_name ?? '无候选'}</div></div>
-            </div>
-            <Collapse ghost size="small" items={[{ key: 'candidates', label: '查看候选顺序', children: <ModelCandidates model={model} compact /> }]} />
-            <div className="mt-2 flex items-center justify-end gap-1">
-              <Switch size="small" checked={model.enabled} onChange={(value) => toggle.mutate({ id: model.id, enabled: value })} />
-              <Tooltip title={model.enabled ? '测试模型' : '启用后可测试'}><span><Button type="text" icon={<ExperimentOutlined />} aria-label={`测试 ${model.name}`} disabled={!model.enabled} onClick={() => testModel(model)} /></span></Tooltip>
-              <Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${model.name}`} onClick={() => editModel(model)} />
-              <Popconfirm title="删除模型路由？" description="已有历史请求时将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(model.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${model.name}`} /></Popconfirm>
-            </div>
-          </Card>
-        )) : <Card><Empty className="py-8" description={name || enabled ? '没有匹配的模型路由' : '暂无模型路由'} /></Card>}
-        {!!models.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={models.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑模型路由' : '新增虚拟模型'} width={820} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存路由">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">
@@ -165,8 +148,8 @@ export default function ModelsPage() {
   )
 }
 
-function ModelCandidates({ model, compact = false }: { model: VirtualModel; compact?: boolean }) {
-  return <div className={compact ? '' : 'p-4'}>{model.candidates.map((candidate) => <div key={candidate.id} className={`mb-3 grid items-start gap-2 border-b border-black/5 pb-3 dark:border-white/5 ${compact ? 'grid-cols-[32px_minmax(0,1fr)]' : 'grid-cols-[44px_1fr_1fr_2fr] gap-4'}`}><span className="font-mono text-[#d7783d]">{String(candidate.position + 1).padStart(2, '0')}</span>{compact ? <div className="min-w-0"><strong className="block break-all">{candidate.provider_name}</strong><code className="mt-1 block break-all text-xs">{candidate.upstream_model}</code><Space wrap size={[4, 4]} className="mt-2">{candidate.protocols.map((item) => <Tag key={item.protocol}>{protocolLabels[item.protocol]}</Tag>)}</Space></div> : <><strong>{candidate.provider_name}</strong><code className="break-all">{candidate.upstream_model}</code><Space wrap>{candidate.protocols.map((item) => <Tag key={item.protocol}>{protocolLabels[item.protocol]}</Tag>)}</Space></>}</div>)}</div>
+function ModelCandidates({ model }: { model: VirtualModel }) {
+  return <div className="p-4">{model.candidates.map((candidate) => <div key={candidate.id} className="mb-3 grid grid-cols-[44px_1fr_1fr_2fr] items-start gap-4 border-b border-black/5 pb-3 dark:border-white/5"><span className="font-mono text-[#d7783d]">{String(candidate.position + 1).padStart(2, '0')}</span><strong>{candidate.provider_name}</strong><code className="break-all">{candidate.upstream_model}</code><Space wrap>{candidate.protocols.map((item) => <Tag key={item.protocol}>{protocolLabels[item.protocol]}</Tag>)}</Space></div>)}</div>
 }
 
 function ProtocolOrderField({ value = [], onChange, available }: { value?: CandidateProtocol['protocol'][]; onChange?: (value: CandidateProtocol['protocol'][]) => void; available: CandidateProtocol['protocol'][] }) {

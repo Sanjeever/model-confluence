@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { App, Button, Card, Collapse, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Tag, Typography } from 'antd'
+import { App, Button, Collapse, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type DeleteResult, type Page, type Provider } from '../api'
 
@@ -180,7 +180,7 @@ export default function ProvidersPage() {
         <Select allowClear placeholder="状态" className="w-full sm:w-[140px]" value={enabled || undefined} onChange={(value) => { setEnabled(value ?? ''); setPage(1) }} options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
         <Select allowClear placeholder="鉴权方式" className="w-full sm:w-[180px]" value={authType || undefined} onChange={(value) => { setAuthType(value ?? ''); setPage(1) }} options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} />
       </div>
-      <div className="hidden lg:block">
+      <div>
         <Table rowKey="id" loading={providers.isPending} dataSource={providers.data?.items ?? []} scroll={{ x: 900, y: 'calc(100vh - 330px)' }} pagination={{ current: page, pageSize, total: providers.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }} locale={{ emptyText: <Empty className="py-14" description={name || enabled || authType ? '没有匹配的供应商' : '暂无供应商'} /> }} expandable={{ expandedRowRender: (record) => <ProviderDetails record={record} /> }} columns={[
           { title: '供应商', dataIndex: 'name', render: (value) => <strong>{value}</strong> },
           { title: '鉴权', dataIndex: 'auth_type', render: (value) => <Tag>{value}</Tag> },
@@ -189,23 +189,6 @@ export default function ProvidersPage() {
           { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
           { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editProvider(record)} /><Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
         ]} />
-      </div>
-      <div className="space-y-3 lg:hidden">
-        {providers.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : providers.data?.items.length ? providers.data.items.map((provider) => (
-          <Card key={provider.id} size="small">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="min-w-0"><strong className="break-all">{provider.name}</strong><div className="mt-1 text-xs text-[#7c8d86]">{provider.auth_type} · {provider.keys.length} 把密钥</div></div>
-            </div>
-            <Space wrap size={[4, 4]} className="mb-3">{Object.keys(provider.endpoints).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space>
-            <Collapse ghost size="small" items={[{ key: 'details', label: '端点与密钥池', children: <ProviderDetails record={provider} compact /> }]} />
-            <div className="mt-2 flex items-center justify-end gap-1">
-              <Switch size="small" checked={provider.enabled} onChange={(value) => toggle.mutate({ id: provider.id, enabled: value })} />
-              <Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${provider.name}`} onClick={() => editProvider(provider)} />
-              <Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(provider.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${provider.name}`} /></Popconfirm>
-            </div>
-          </Card>
-        )) : <Card><Empty className="py-8" description={name || enabled || authType ? '没有匹配的供应商' : '暂无供应商'} /></Card>}
-        {!!providers.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={providers.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑供应商' : '新增供应商'} width={760} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">
@@ -221,8 +204,8 @@ export default function ProvidersPage() {
   )
 }
 
-function ProviderDetails({ record, compact = false }: { record: Provider; compact?: boolean }) {
-  return <div className={`grid grid-cols-1 gap-5 ${compact ? '' : 'p-4 lg:grid-cols-2 lg:gap-6'}`}>
+function ProviderDetails({ record }: { record: Provider }) {
+  return <div className="grid grid-cols-1 gap-5 p-4 lg:grid-cols-2 lg:gap-6">
     <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">协议端点</div>{Object.entries(record.endpoints).map(([key, value]) => <div key={key} className="mb-2 flex flex-col gap-1 sm:flex-row sm:gap-3"><Tag className="w-fit">{key}</Tag><code className="break-all text-xs">{value}</code></div>)}</div>
     <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">上游密钥池</div>{record.keys.map((key) => <div key={key.id} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-black/5 pb-2 dark:border-white/5"><span className="min-w-0 break-all">{key.name || `密钥 ${key.position + 1}`} · <code className="text-xs">{key.secret || '—'}</code></span><Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{runtimeStatusName(key.runtime_status)}</Tag></div>)}</div>
   </div>

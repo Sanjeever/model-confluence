@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Col, DatePicker, Empty, Row, Skeleton, Select, Space, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Empty, Row, Select, Space, Table, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type UsageGroup, type UsagePage } from '../api'
+import { api, type UsagePage } from '../api'
 import MetricCard from '../components/MetricCard'
 import { formatCount, formatPercent } from '../format'
 
@@ -70,7 +70,7 @@ export default function CostsPage() {
         </div>
       </Card>
 
-      <div className="hidden lg:block">
+      <div>
         <Card className="mt-6 overflow-hidden" styles={{ body: { padding: 0 } }}>
           <Table
             rowKey={(record) => `${record.date}-${record.virtual_model}-${record.upstream_model}`}
@@ -96,36 +96,10 @@ export default function CostsPage() {
         </Card>
       </div>
 
-      <div className="mt-6 space-y-3 lg:hidden">
-        {usage.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : usage.data?.groups.length ? usage.data.groups.map((record) => <UsageCard key={`${record.date}-${record.virtual_model}-${record.upstream_model}`} record={record} />) : <Card><Empty className="py-8" description="所选范围内暂无已完成的用量记录" /></Card>}
-      </div>
-
     </div>
   )
 }
 
 function CacheItem({ label, value, color }: { label: string; value: number; color: string }) {
   return <div className="flex items-center gap-2 text-sm"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} /><span className="text-[#7c8d86]">{label}</span><strong className="ml-auto font-mono">{formatCount(value)}</strong></div>
-}
-
-function UsageCard({ record }: { record: UsageGroup }) {
-  return <Card size="small">
-    <div className="mb-3 flex items-start justify-between gap-3">
-      <div className="min-w-0"><span className="font-mono text-xs text-[#7c8d86]">{record.date}</span><code className="mt-1 block break-all text-sm font-medium">{record.virtual_model || '未指定'}</code></div>
-      <Tag>{formatCount(record.request_count)} 请求</Tag>
-    </div>
-    <div className="mb-2 flex items-start justify-between gap-3"><strong className="min-w-0 break-all text-sm">{record.provider_name || '—'}</strong><code className="shrink-0 text-xs">{record.upstream_model || '—'}</code></div>
-    <Space wrap size={[4, 4]}>
-      <TokenTag label="输入" value={record.usage.input_tokens} />
-      <TokenTag label="缓存读" value={record.usage.cache_read_tokens} />
-      <TokenTag label="缓存写" value={record.usage.cache_write_tokens} />
-      <TokenTag label="输出" value={record.usage.output_tokens} />
-      <TokenTag label="推理" value={record.usage.reasoning_tokens} />
-    </Space>
-    <div className="mt-3 border-t border-black/5 pt-2 text-right text-sm dark:border-white/5">总计 <strong className="font-mono">{formatCount(record.usage.total_tokens)}</strong> Token</div>
-  </Card>
-}
-
-function TokenTag({ label, value }: { label: string; value: number }) {
-  return <Tag>{label} {formatCount(value)}</Tag>
 }

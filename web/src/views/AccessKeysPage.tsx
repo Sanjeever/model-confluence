@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import dayjs, { type Dayjs } from 'dayjs'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { App, Button, Card, DatePicker, Empty, Form, Input, Modal, Pagination, Popconfirm, Select, Skeleton, Space, Switch, Table, Typography } from 'antd'
+import { App, Button, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Typography } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type AccessKey, type DeleteResult, type Page } from '../api'
 
@@ -79,7 +79,7 @@ export default function AccessKeysPage() {
         <Input.Search allowClear enterButton="搜索" placeholder="搜索名称" className="min-w-0 sm:max-w-[360px]" value={nameInput} onChange={(event) => { const value = event.target.value; setNameInput(value); if (!value) { setName(''); setPage(1) } }} onSearch={(value) => { setName(value.trim()); setPage(1) }} />
         <Select allowClear placeholder="状态" className="w-full sm:w-[140px]" value={enabled || undefined} onChange={(value) => { setEnabled(value ?? ''); setPage(1) }} options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
       </div>
-      <div className="hidden lg:block">
+      <div>
         <Table
           rowKey="id"
           loading={keys.isPending}
@@ -95,25 +95,6 @@ export default function AccessKeysPage() {
             { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editKey(record)} /><Popconfirm title="删除访问密钥？" description="已产生历史记录的密钥将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
           ]}
         />
-      </div>
-      <div className="space-y-3 lg:hidden">
-        {keys.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : keys.data?.items.length ? keys.data.items.map((key) => (
-          <Card key={key.id} size="small">
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="min-w-0"><strong className="break-all">{key.name}</strong><div className="mt-1 text-xs text-[#7c8d86]">{key.last_used_at ? `最后使用 ${new Date(key.last_used_at).toLocaleString()}` : '从未使用'}</div></div>
-            </div>
-            <Space.Compact className="mb-3 w-full"><Input readOnly value={key.secret} className="min-w-0 font-mono" /><Button aria-label="复制密钥" icon={<CopyOutlined />} onClick={() => { navigator.clipboard.writeText(key.secret!); message.success('密钥已复制') }} /></Space.Compact>
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-xs text-[#7c8d86]">{key.expires_at ? `${new Date(key.expires_at).toLocaleString()} 过期` : '永不过期'}</span>
-              <Space size={4}>
-                <Switch size="small" checked={key.enabled} loading={toggle.isPending} onChange={(value) => toggle.mutate({ id: key.id, enabled: value })} />
-                <Button type="text" icon={<EditOutlined />} aria-label={`编辑 ${key.name}`} onClick={() => editKey(key)} />
-                <Popconfirm title="删除访问密钥？" description="已产生历史记录的密钥将转为归档。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(key.id)}><Button type="text" danger icon={<DeleteOutlined />} aria-label={`删除 ${key.name}`} /></Popconfirm>
-              </Space>
-            </div>
-          </Card>
-        )) : <Card><Empty className="py-8" description={name || enabled ? '没有匹配的访问密钥' : '暂无访问密钥'} /></Card>}
-        {!!keys.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={keys.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑访问密钥' : '创建访问密钥'} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">

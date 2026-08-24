@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { Button, Card, Col, DatePicker, Empty, Input, Pagination, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
+import { Button, Card, Col, DatePicker, Empty, Input, Row, Space, Table, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
@@ -87,7 +87,7 @@ export default function OverviewPage() {
           </Col>
         ))}
       </Row>
-      <div className="mt-6 hidden lg:mt-8 lg:block">
+      <div className="mt-6 lg:mt-8">
         <Card className="overflow-hidden" styles={{ body: { padding: 0 } }}>
           <Table
           rowKey="id"
@@ -111,30 +111,6 @@ export default function OverviewPage() {
           ]}
           />
         </Card>
-      </div>
-      <div className="mt-6 space-y-3 lg:hidden">
-        {requests.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : (requests.data?.items ?? []).length ? (requests.data?.items ?? []).map((record) => (
-          <Card key={record.id} size="small" className="cursor-pointer" onClick={() => openDetail(record.id)}>
-            <div className="mb-3 flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <div className="text-xs text-[#7c8d86]">{new Date(record.created_at).toLocaleString()}</div>
-                <code className="mt-1 block break-all text-xs">{record.id}</code>
-              </div>
-              <Space className="shrink-0" size={4} wrap><Tag color={record.status === 'completed' ? 'success' : record.status === 'in_progress' ? 'processing' : 'error'}>{statusName(record.status)}</Tag>{record.payload_pruned && <Tag>载荷已清理</Tag>}</Space>
-            </div>
-            <div className="mb-3 flex items-center justify-between gap-3">
-              <code className="min-w-0 break-all text-sm font-medium">{record.virtual_model}</code>
-              <span className="shrink-0 text-xs text-[#7c8d86]">{record.total_ms == null ? '—' : `${record.total_ms} ms`}</span>
-            </div>
-            <Space size={6} wrap>
-              <Tag style={{ marginInlineEnd: 0 }}>{protocolName(record.inbound_protocol)}</Tag>
-              <SwapRightOutlined className="text-[#7c8d86]" />
-              <Tag color="orange" style={{ marginInlineEnd: 0 }}>{protocolName(record.upstream_protocol)}</Tag>
-              <Tag color={record.stream ? 'processing' : undefined}>{record.stream ? '流式' : '非流式'}</Tag>
-            </Space>
-          </Card>
-        )) : <Card><Empty className="py-8" description={requestID ? '没有匹配该请求 ID 的记录' : '所选时间范围内暂无请求记录'} /></Card>}
-        {!!requests.data?.total && <div className="flex justify-center pt-2"><Pagination simple current={page} pageSize={pageSize} total={requests.data.total} onChange={(nextPage) => setPage(nextPage)} /></div>}
       </div>
       <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={closeDetail} />
     </div>

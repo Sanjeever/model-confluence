@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { useLocation, useNavigate } from 'react-router-dom'
-import { Alert, Button, Card, Col, DatePicker, Empty, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
+import { Alert, Button, Card, Col, DatePicker, Empty, Row, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type PerformanceOverview, type PerformanceRequest } from '../api'
+import { api, type PerformanceOverview } from '../api'
 import { protocolName, statusName } from '../components/RequestDrawer'
 import MetricCard from '../components/MetricCard'
 import { formatCount, formatDuration, formatPercent } from '../format'
@@ -78,7 +78,7 @@ export default function PerformancePage() {
 
       <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">异常与慢请求</Typography.Title>
 
-      <div className="mt-4 hidden lg:block">
+      <div className="mt-4">
         <Card className="overflow-hidden" styles={{ body: { padding: 0 } }}>
           <Table
             rowKey="id"
@@ -102,29 +102,8 @@ export default function PerformancePage() {
         </Card>
       </div>
 
-      <div className="mt-4 space-y-3 lg:hidden">
-        {performance.isPending ? <Card><Skeleton active paragraph={{ rows: 3 }} /></Card> : (overview?.attention_requests ?? []).length ? (overview?.attention_requests ?? []).map((record) => <AttentionCard key={record.id} record={record} onClick={() => openDetail(record.id)} />) : <Card><Empty className="py-8" description={overview?.request_count ? '所选范围内没有可关注的请求' : '所选时间范围内暂无请求记录'} /></Card>}
-      </div>
-
     </div>
   )
-}
-
-function AttentionCard({ record, onClick }: { record: PerformanceRequest; onClick: () => void }) {
-  return <Card size="small" className="cursor-pointer" onClick={onClick}>
-    <div className="mb-3 flex items-start justify-between gap-3">
-      <div className="min-w-0"><div className="text-xs text-[#7c8d86]">{new Date(record.created_at).toLocaleString()}</div><code className="mt-1 block break-all text-xs">{record.id}</code></div>
-      <Tag className="shrink-0" color={statusColor(record.status)}>{statusName(record.status)}</Tag>
-    </div>
-    <div className="mb-3 flex items-start justify-between gap-3"><code className="min-w-0 break-all text-sm font-medium">{record.virtual_model || '未指定'}</code><span className="shrink-0 text-xs text-[#7c8d86]">{formatDuration(record.total_ms)}</span></div>
-    <Space size={6} wrap>
-      <Tag style={{ marginInlineEnd: 0 }}>{protocolName(record.inbound_protocol)}</Tag>
-      <SwapRightOutlined className="text-[#7c8d86]" />
-      <Tag color="orange" style={{ marginInlineEnd: 0 }}>{protocolName(record.upstream_protocol)}</Tag>
-      {record.provider_name && <Tag>{record.provider_name}</Tag>}
-    </Space>
-    {record.error_message && <div className="mt-3 truncate text-xs text-[#c65d4b]" title={record.error_message}>{record.error_message}</div>}
-  </Card>
 }
 
 function statusColor(value: string): string | undefined {
