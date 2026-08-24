@@ -219,11 +219,16 @@ func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
 	if err := tx.Commit(); err != nil {
 		return Provider{}, err
 	}
+	s.invalidateConfig()
 	return Provider{ID: id, Name: input.Name, Enabled: true, AuthType: input.AuthType, AuthHeader: input.AuthHeader, StaticHeaders: input.StaticHeaders, QuotaCodes: input.QuotaCodes, Endpoints: input.Endpoints, CreatedAt: now}, nil
 }
 
 func (s *Store) SetProviderEnabled(id int64, enabled bool) error {
-	return updateEnabled(s.db, "providers", id, enabled)
+	if err := updateEnabled(s.db, "providers", id, enabled); err != nil {
+		return err
+	}
+	s.invalidateConfig()
+	return nil
 }
 
 func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
@@ -315,7 +320,11 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateConfig()
+	return nil
 }
 
 func providerUsedProtocols(tx *sql.Tx, providerID int64) (map[string]struct{}, error) {
@@ -380,7 +389,11 @@ func (s *Store) DeleteProvider(id int64) (DeleteResult, error) {
 			return DeleteResult{}, err
 		}
 	}
-	return result, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return DeleteResult{}, err
+	}
+	s.invalidateConfig()
+	return result, nil
 }
 
 func providerKeyIDs(tx *sql.Tx, providerID int64) (map[int64]struct{}, error) {
@@ -621,11 +634,16 @@ func (s *Store) CreateVirtualModel(input CreateVirtualModelInput) (VirtualModel,
 	if err := tx.Commit(); err != nil {
 		return VirtualModel{}, err
 	}
+	s.invalidateConfig()
 	return VirtualModel{ID: id, Name: input.Name, Enabled: true, CreatedAt: now}, nil
 }
 
 func (s *Store) SetVirtualModelEnabled(id int64, enabled bool) error {
-	return updateEnabled(s.db, "virtual_models", id, enabled)
+	if err := updateEnabled(s.db, "virtual_models", id, enabled); err != nil {
+		return err
+	}
+	s.invalidateConfig()
+	return nil
 }
 
 func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) error {
@@ -703,7 +721,11 @@ func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) erro
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.invalidateConfig()
+	return nil
 }
 
 func validateCandidateProtocols(tx *sql.Tx, candidates []CreateCandidateInput) error {
@@ -758,7 +780,11 @@ func (s *Store) DeleteVirtualModel(id int64) (DeleteResult, error) {
 			return DeleteResult{}, err
 		}
 	}
-	return result, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return DeleteResult{}, err
+	}
+	s.invalidateConfig()
+	return result, nil
 }
 
 func candidateIDs(tx *sql.Tx, modelID int64) (map[int64]struct{}, error) {

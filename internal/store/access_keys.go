@@ -112,6 +112,7 @@ func (s *Store) CreateAccessKey(name string, expiresAt *time.Time) (AccessKey, e
 	if err := tx.Commit(); err != nil {
 		return AccessKey{}, err
 	}
+	s.invalidateConfig()
 	return AccessKey{ID: id, Name: name, Secret: secret, SecretHint: secretHint(secret), Enabled: true, ExpiresAt: expiresAt, CreatedAt: now}, nil
 }
 
@@ -127,6 +128,7 @@ func (s *Store) SetAccessKeyEnabled(id int64, enabled bool) error {
 	if rows == 0 {
 		return sql.ErrNoRows
 	}
+	s.invalidateConfig()
 	return nil
 }
 
@@ -146,6 +148,7 @@ func (s *Store) UpdateAccessKey(id int64, name string, expiresAt *time.Time, ena
 	if rows == 0 {
 		return sql.ErrNoRows
 	}
+	s.invalidateConfig()
 	return nil
 }
 
@@ -175,12 +178,15 @@ func (s *Store) DeleteAccessKey(id int64) (DeleteResult, error) {
 	if err != nil {
 		return DeleteResult{}, err
 	}
-	return result, tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return DeleteResult{}, err
+	}
+	s.invalidateConfig()
+	return result, nil
 }
 
 func (s *Store) AuthenticateAccessKey(secret string) (AccessKey, error) {
-	row := s.db.QueryRow(`SELECT id, name, secret, enabled, expires_at, last_used_at, created_at FROM access_keys WHERE secret = ? AND archived_at IS NULL`, secret)
-	key, err := scanAccessKey(row)
+	key, err := s.cachedAccessKey(secret)
 	if err != nil {
 		return AccessKey{}, err
 	}
@@ -191,10 +197,42 @@ func (s *Store) AuthenticateAccessKey(secret string) (AccessKey, error) {
 		return AccessKey{}, errors.New("access key is expired")
 	}
 	now := time.Now().UTC()
-	if _, err := s.db.Exec(`UPDATE access_keys SET last_used_at = ? WHERE id = ?`, formatTime(now), key.ID); err != nil {
+	if err := s.touchConfig("access_key", key.ID, now, func() error {
+		_, err := s.db.Exec(`UPDATE access_keys SET last_used_at = ? WHERE id = ?`, formatTime(now), key.ID)
+		return err
+	}); err != nil {
 		return AccessKey{}, err
 	}
 	key.LastUsedAt = &now
+	return key, nil
+}
+
+func (s *Store) cachedAccessKey(secret string) (AccessKey, error) {
+	s.configMu.RLock()
+	key, ok := s.accessKeyCache[secret]
+	s.configMu.RUnlock()
+	if ok {
+		return key, nil
+	}
+	s.accessKeyLoadMu.Lock()
+	defer s.accessKeyLoadMu.Unlock()
+	s.configMu.RLock()
+	key, ok = s.accessKeyCache[secret]
+	version := s.configVersion
+	s.configMu.RUnlock()
+	if ok {
+		return key, nil
+	}
+	row := s.db.QueryRow(`SELECT id, name, secret, enabled, expires_at, last_used_at, created_at FROM access_keys WHERE secret = ? AND archived_at IS NULL`, secret)
+	key, err := scanAccessKey(row)
+	if err != nil {
+		return AccessKey{}, err
+	}
+	s.configMu.Lock()
+	if version == s.configVersion {
+		s.accessKeyCache[secret] = key
+	}
+	s.configMu.Unlock()
 	return key, nil
 }
 

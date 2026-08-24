@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -19,7 +20,22 @@ const timestampLayout = time.RFC3339Nano
 const sessionTouchInterval = 5 * time.Minute
 
 type Store struct {
-	db *sql.DB
+	db                *sql.DB
+	configMu          sync.RWMutex
+	routeLoadMu       sync.Mutex
+	accessKeyLoadMu   sync.Mutex
+	configVersion     uint64
+	routeCache        map[RoutingRequirements][]ResolvedRoute
+	accessKeyCache    map[string]AccessKey
+	modelNamesCache   []string
+	modelNamesCached  bool
+	touchMu           sync.Mutex
+	lastConfigTouches map[configTouchKey]time.Time
+}
+
+type configTouchKey struct {
+	kind string
+	id   int64
 }
 
 func Open(path string) (*Store, error) {
@@ -31,12 +47,44 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(8)
-	store := &Store{db: db}
+	store := &Store{db: db, routeCache: make(map[RoutingRequirements][]ResolvedRoute), accessKeyCache: make(map[string]AccessKey), lastConfigTouches: make(map[configTouchKey]time.Time)}
 	if err := store.migrate(); err != nil {
 		db.Close()
 		return nil, err
 	}
 	return store, nil
+}
+
+func (s *Store) invalidateConfig() {
+	s.configMu.Lock()
+	s.configVersion++
+	s.routeCache = make(map[RoutingRequirements][]ResolvedRoute)
+	s.accessKeyCache = make(map[string]AccessKey)
+	s.modelNamesCache = nil
+	s.modelNamesCached = false
+	s.configMu.Unlock()
+	s.touchMu.Lock()
+	s.lastConfigTouches = make(map[configTouchKey]time.Time)
+	s.touchMu.Unlock()
+}
+
+func (s *Store) touchConfig(kind string, id int64, now time.Time, update func() error) error {
+	key := configTouchKey{kind: kind, id: id}
+	s.touchMu.Lock()
+	last := s.lastConfigTouches[key]
+	if !last.IsZero() && now.Sub(last) < time.Minute {
+		s.touchMu.Unlock()
+		return nil
+	}
+	s.lastConfigTouches[key] = now
+	s.touchMu.Unlock()
+	if err := update(); err != nil {
+		s.touchMu.Lock()
+		delete(s.lastConfigTouches, key)
+		s.touchMu.Unlock()
+		return err
+	}
+	return nil
 }
 
 func (s *Store) Close() error {
