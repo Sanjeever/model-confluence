@@ -194,5 +194,9 @@ CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
 CREATE INDEX IF NOT EXISTS idx_requests_access_key_id ON requests(access_key_id);
 CREATE INDEX IF NOT EXISTS idx_requests_virtual_model ON requests(virtual_model);
 CREATE INDEX IF NOT EXISTS idx_attempts_request_id ON attempts(request_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_status ON attempts(status);
+CREATE INDEX IF NOT EXISTS idx_attempts_provider_id ON attempts(provider_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_upstream_key_id ON attempts(upstream_key_id);
+CREATE INDEX IF NOT EXISTS idx_attempts_candidate_id ON attempts(candidate_id);
 CREATE INDEX IF NOT EXISTS idx_security_events_created_at ON security_events(created_at DESC);
 `
