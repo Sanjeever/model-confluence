@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -74,16 +75,24 @@ func (s *Store) ListProviders() ([]Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	providers := make([]Provider, 0)
 	for rows.Next() {
-		provider, err := s.scanProvider(rows)
+		provider, err := scanProvider(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		providers = append(providers, provider)
 	}
-	return providers, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if err := s.hydrateProviders(providers, true); err != nil {
+		return nil, err
+	}
+	return providers, nil
 }
 
 func (s *Store) ListProvidersPage(page, pageSize int, name, authType string, enabled *bool) (ProviderPage, error) {
@@ -112,16 +121,21 @@ func (s *Store) ListProvidersPage(page, pageSize int, name, authType string, ena
 	if err != nil {
 		return ProviderPage{}, err
 	}
-	defer rows.Close()
 	providers := make([]Provider, 0)
 	for rows.Next() {
-		provider, err := s.scanProvider(rows)
+		provider, err := scanProvider(rows)
 		if err != nil {
+			rows.Close()
 			return ProviderPage{}, err
 		}
 		providers = append(providers, provider)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
+		return ProviderPage{}, err
+	}
+	rows.Close()
+	if err := s.hydrateProviders(providers, true); err != nil {
 		return ProviderPage{}, err
 	}
 	return ProviderPage{Items: providers, Total: total, Page: page, PageSize: pageSize}, nil
@@ -132,23 +146,48 @@ func (s *Store) ListProviderOptions() ([]ProviderOption, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	options := make([]ProviderOption, 0)
 	for rows.Next() {
 		var option ProviderOption
 		if err := rows.Scan(&option.ID, &option.Name, &option.Enabled); err != nil {
-			return nil, err
-		}
-		option.Endpoints, err = s.providerEndpoints(option.ID)
-		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		options = append(options, option)
 	}
-	return options, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	ids := make([]int64, len(options))
+	byID := make(map[int64]int, len(options))
+	for index := range options {
+		ids[index] = options[index].ID
+		byID[options[index].ID] = index
+		options[index].Endpoints = make(map[string]string)
+	}
+	if len(ids) == 0 {
+		return options, nil
+	}
+	placeholders, args := idQuery(ids)
+	endpointRows, err := s.db.Query(`SELECT provider_id, protocol, url FROM provider_endpoints WHERE provider_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer endpointRows.Close()
+	for endpointRows.Next() {
+		var providerID int64
+		var protocol, url string
+		if err := endpointRows.Scan(&providerID, &protocol, &url); err != nil {
+			return nil, err
+		}
+		options[byID[providerID]].Endpoints[protocol] = url
+	}
+	return options, endpointRows.Err()
 }
 
-func (s *Store) scanProvider(row rowScanner) (Provider, error) {
+func scanProvider(row rowScanner) (Provider, error) {
 	var provider Provider
 	var staticHeadersJSON, quotaCodesJSON, createdAt string
 	if err := row.Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt); err != nil {
@@ -165,15 +204,62 @@ func (s *Store) scanProvider(row rowScanner) (Provider, error) {
 	if err != nil {
 		return Provider{}, err
 	}
-	provider.Endpoints, err = s.providerEndpoints(provider.ID)
-	if err != nil {
-		return Provider{}, err
-	}
-	provider.Keys, err = s.providerKeys(provider.ID, true)
-	if err != nil {
-		return Provider{}, err
-	}
+	provider.Endpoints = make(map[string]string)
+	provider.Keys = []UpstreamKey{}
 	return provider, nil
+}
+
+func (s *Store) hydrateProviders(providers []Provider, includeSecrets bool) error {
+	if len(providers) == 0 {
+		return nil
+	}
+	ids := make([]int64, len(providers))
+	byID := make(map[int64]int, len(providers))
+	for index := range providers {
+		ids[index] = providers[index].ID
+		byID[providers[index].ID] = index
+	}
+	placeholders, args := idQuery(ids)
+	endpointRows, err := s.db.Query(`SELECT provider_id, protocol, url FROM provider_endpoints WHERE provider_id IN (`+placeholders+`)`, args...)
+	if err != nil {
+		return err
+	}
+	for endpointRows.Next() {
+		var providerID int64
+		var protocol, url string
+		if err := endpointRows.Scan(&providerID, &protocol, &url); err != nil {
+			endpointRows.Close()
+			return err
+		}
+		providers[byID[providerID]].Endpoints[protocol] = url
+	}
+	if err := endpointRows.Err(); err != nil {
+		endpointRows.Close()
+		return err
+	}
+	endpointRows.Close()
+	keyRows, err := s.db.Query(`SELECT provider_id, id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at FROM upstream_keys WHERE provider_id IN (`+placeholders+`) AND archived_at IS NULL ORDER BY provider_id, position`, args...)
+	if err != nil {
+		return err
+	}
+	defer keyRows.Close()
+	for keyRows.Next() {
+		var providerID int64
+		key, err := scanUpstreamKey(keyRows, &providerID, includeSecrets)
+		if err != nil {
+			return err
+		}
+		providers[byID[providerID]].Keys = append(providers[byID[providerID]].Keys, key)
+	}
+	return keyRows.Err()
+}
+
+func idQuery(ids []int64) (string, []any) {
+	args := make([]any, len(ids))
+	for index, id := range ids {
+		args[index] = id
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", len(ids)), ","), args
 }
 
 func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
@@ -438,27 +524,40 @@ func (s *Store) providerKeys(providerID int64, includeSecret bool) ([]UpstreamKe
 	defer rows.Close()
 	var keys []UpstreamKey
 	for rows.Next() {
-		var key UpstreamKey
-		var expiresAt, recoverAt, lastUsedAt sql.NullString
-		if err := rows.Scan(&key.ID, &key.Name, &key.Secret, &key.Position, &key.Enabled, &expiresAt, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &lastUsedAt); err != nil {
-			return nil, err
-		}
-		key.SecretHint = secretHint(key.Secret)
-		if !includeSecret {
-			key.Secret = ""
-		}
-		if key.ExpiresAt, err = parseNullableTime(expiresAt); err != nil {
-			return nil, err
-		}
-		if key.RecoverAt, err = parseNullableTime(recoverAt); err != nil {
-			return nil, err
-		}
-		if key.LastUsedAt, err = parseNullableTime(lastUsedAt); err != nil {
+		key, err := scanUpstreamKey(rows, nil, includeSecret)
+		if err != nil {
 			return nil, err
 		}
 		keys = append(keys, key)
 	}
 	return keys, rows.Err()
+}
+
+func scanUpstreamKey(row rowScanner, providerID *int64, includeSecret bool) (UpstreamKey, error) {
+	var key UpstreamKey
+	var expiresAt, recoverAt, lastUsedAt sql.NullString
+	destinations := []any{&key.ID, &key.Name, &key.Secret, &key.Position, &key.Enabled, &expiresAt, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &lastUsedAt}
+	if providerID != nil {
+		destinations = append([]any{providerID}, destinations...)
+	}
+	if err := row.Scan(destinations...); err != nil {
+		return UpstreamKey{}, err
+	}
+	key.SecretHint = secretHint(key.Secret)
+	if !includeSecret {
+		key.Secret = ""
+	}
+	var err error
+	if key.ExpiresAt, err = parseNullableTime(expiresAt); err != nil {
+		return UpstreamKey{}, err
+	}
+	if key.RecoverAt, err = parseNullableTime(recoverAt); err != nil {
+		return UpstreamKey{}, err
+	}
+	if key.LastUsedAt, err = parseNullableTime(lastUsedAt); err != nil {
+		return UpstreamKey{}, err
+	}
+	return key, nil
 }
 
 type VirtualModel struct {
@@ -518,16 +617,24 @@ func (s *Store) ListVirtualModels() ([]VirtualModel, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	models := make([]VirtualModel, 0)
 	for rows.Next() {
-		model, err := s.scanVirtualModel(rows)
+		model, err := scanVirtualModel(rows)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		models = append(models, model)
 	}
-	return models, rows.Err()
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+	if err := s.hydrateVirtualModels(models); err != nil {
+		return nil, err
+	}
+	return models, nil
 }
 
 func (s *Store) ListVirtualModelsPage(page, pageSize int, name string, enabled *bool) (VirtualModelPage, error) {
@@ -552,22 +659,27 @@ func (s *Store) ListVirtualModelsPage(page, pageSize int, name string, enabled *
 	if err != nil {
 		return VirtualModelPage{}, err
 	}
-	defer rows.Close()
 	models := make([]VirtualModel, 0)
 	for rows.Next() {
-		model, err := s.scanVirtualModel(rows)
+		model, err := scanVirtualModel(rows)
 		if err != nil {
+			rows.Close()
 			return VirtualModelPage{}, err
 		}
 		models = append(models, model)
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
+		return VirtualModelPage{}, err
+	}
+	rows.Close()
+	if err := s.hydrateVirtualModels(models); err != nil {
 		return VirtualModelPage{}, err
 	}
 	return VirtualModelPage{Items: models, Total: total, Page: page, PageSize: pageSize}, nil
 }
 
-func (s *Store) scanVirtualModel(row rowScanner) (VirtualModel, error) {
+func scanVirtualModel(row rowScanner) (VirtualModel, error) {
 	var model VirtualModel
 	var createdAt string
 	if err := row.Scan(&model.ID, &model.Name, &model.Enabled, &createdAt); err != nil {
@@ -578,11 +690,70 @@ func (s *Store) scanVirtualModel(row rowScanner) (VirtualModel, error) {
 	if err != nil {
 		return VirtualModel{}, err
 	}
-	model.Candidates, err = s.modelCandidates(model.ID)
-	if err != nil {
-		return VirtualModel{}, err
-	}
+	model.Candidates = []ModelCandidate{}
 	return model, nil
+}
+
+func (s *Store) hydrateVirtualModels(models []VirtualModel) error {
+	if len(models) == 0 {
+		return nil
+	}
+	modelIDs := make([]int64, len(models))
+	modelsByID := make(map[int64]int, len(models))
+	for index := range models {
+		modelIDs[index] = models[index].ID
+		modelsByID[models[index].ID] = index
+	}
+	placeholders, args := idQuery(modelIDs)
+	rows, err := s.db.Query(`SELECT c.virtual_model_id, c.id, c.provider_id, p.name, c.upstream_model, c.position, c.enabled, c.default_max_output_tokens, c.max_output_tokens, c.runtime_status FROM model_candidates c JOIN providers p ON p.id = c.provider_id WHERE c.virtual_model_id IN (`+placeholders+`) AND c.archived_at IS NULL ORDER BY c.virtual_model_id, c.position`, args...)
+	if err != nil {
+		return err
+	}
+	type candidateLocation struct{ model, candidate int }
+	locations := make(map[int64]candidateLocation)
+	candidateIDs := make([]int64, 0)
+	for rows.Next() {
+		var modelID int64
+		var candidate ModelCandidate
+		if err := rows.Scan(&modelID, &candidate.ID, &candidate.ProviderID, &candidate.ProviderName, &candidate.UpstreamModel, &candidate.Position, &candidate.Enabled, &candidate.DefaultMaxOutputTokens, &candidate.MaxOutputTokens, &candidate.RuntimeStatus); err != nil {
+			rows.Close()
+			return err
+		}
+		candidate.Protocols = []CandidateProtocol{}
+		modelIndex := modelsByID[modelID]
+		models[modelIndex].Candidates = append(models[modelIndex].Candidates, candidate)
+		locations[candidate.ID] = candidateLocation{model: modelIndex, candidate: len(models[modelIndex].Candidates) - 1}
+		candidateIDs = append(candidateIDs, candidate.ID)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if len(candidateIDs) == 0 {
+		return nil
+	}
+	placeholders, args = idQuery(candidateIDs)
+	protocolRows, err := s.db.Query(`SELECT candidate_id, protocol, position, supports_stream, supports_tools, supports_parallel_tools, effort_levels_json, supports_stream_usage FROM candidate_protocols WHERE candidate_id IN (`+placeholders+`) ORDER BY candidate_id, position`, args...)
+	if err != nil {
+		return err
+	}
+	defer protocolRows.Close()
+	for protocolRows.Next() {
+		var candidateID int64
+		var protocol CandidateProtocol
+		var effortLevelsJSON string
+		if err := protocolRows.Scan(&candidateID, &protocol.Protocol, &protocol.Position, &protocol.SupportsStream, &protocol.SupportsTools, &protocol.SupportsParallelTools, &effortLevelsJSON, &protocol.SupportsStreamUsage); err != nil {
+			return err
+		}
+		if err := json.Unmarshal([]byte(effortLevelsJSON), &protocol.EffortLevels); err != nil {
+			return err
+		}
+		location := locations[candidateID]
+		candidate := &models[location.model].Candidates[location.candidate]
+		candidate.Protocols = append(candidate.Protocols, protocol)
+	}
+	return protocolRows.Err()
 }
 
 func (s *Store) VirtualModelName(id int64) (string, error) {
@@ -818,45 +989,11 @@ func insertCandidateProtocols(tx *sql.Tx, candidateID int64, protocols []Candida
 }
 
 func (s *Store) modelCandidates(modelID int64) ([]ModelCandidate, error) {
-	rows, err := s.db.Query(`SELECT c.id, c.provider_id, p.name, c.upstream_model, c.position, c.enabled, c.default_max_output_tokens, c.max_output_tokens, c.runtime_status FROM model_candidates c JOIN providers p ON p.id = c.provider_id WHERE c.virtual_model_id = ? AND c.archived_at IS NULL ORDER BY c.position`, modelID)
-	if err != nil {
+	models := []VirtualModel{{ID: modelID, Candidates: []ModelCandidate{}}}
+	if err := s.hydrateVirtualModels(models); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var candidates []ModelCandidate
-	for rows.Next() {
-		var candidate ModelCandidate
-		if err := rows.Scan(&candidate.ID, &candidate.ProviderID, &candidate.ProviderName, &candidate.UpstreamModel, &candidate.Position, &candidate.Enabled, &candidate.DefaultMaxOutputTokens, &candidate.MaxOutputTokens, &candidate.RuntimeStatus); err != nil {
-			return nil, err
-		}
-		candidate.Protocols, err = s.candidateProtocols(candidate.ID)
-		if err != nil {
-			return nil, err
-		}
-		candidates = append(candidates, candidate)
-	}
-	return candidates, rows.Err()
-}
-
-func (s *Store) candidateProtocols(candidateID int64) ([]CandidateProtocol, error) {
-	rows, err := s.db.Query(`SELECT protocol, position, supports_stream, supports_tools, supports_parallel_tools, effort_levels_json, supports_stream_usage FROM candidate_protocols WHERE candidate_id = ? ORDER BY position`, candidateID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	var protocols []CandidateProtocol
-	for rows.Next() {
-		var protocol CandidateProtocol
-		var effortLevelsJSON string
-		if err := rows.Scan(&protocol.Protocol, &protocol.Position, &protocol.SupportsStream, &protocol.SupportsTools, &protocol.SupportsParallelTools, &effortLevelsJSON, &protocol.SupportsStreamUsage); err != nil {
-			return nil, err
-		}
-		if err := json.Unmarshal([]byte(effortLevelsJSON), &protocol.EffortLevels); err != nil {
-			return nil, err
-		}
-		protocols = append(protocols, protocol)
-	}
-	return protocols, rows.Err()
+	return models[0].Candidates, nil
 }
 
 func updateEnabled(db *sql.DB, table string, id int64, enabled bool) error {
