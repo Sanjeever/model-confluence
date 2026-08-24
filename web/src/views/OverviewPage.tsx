@@ -1,6 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useLocation, useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Button, Card, Col, DatePicker, Empty, Input, Row, Space, Table, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
@@ -16,14 +16,17 @@ const metrics: Array<{ key: keyof Overview; label: string }> = [
 ]
 
 export default function OverviewPage() {
-  const [page, setPage] = useState(1)
-  const [pageSize, setPageSize] = useState(10)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const [page, setPage] = useState(() => positiveInteger(searchParams.get('page'), 1))
+  const [pageSize, setPageSize] = useState(() => positiveInteger(searchParams.get('page_size'), 10))
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(() => {
     const today = dayjs().startOf('day')
-    return [today, today]
+    const from = dayjs(searchParams.get('from'))
+    const to = dayjs(searchParams.get('to'))
+    return [from.isValid() ? from : today, to.isValid() ? to : today]
   })
-  const [requestIDInput, setRequestIDInput] = useState('')
-  const [requestID, setRequestID] = useState('')
+  const [requestIDInput, setRequestIDInput] = useState(() => searchParams.get('request_id') ?? '')
+  const [requestID, setRequestID] = useState(() => searchParams.get('request_id') ?? '')
   const { detailID } = useParams<{ detailID: string }>()
   const location = useLocation()
   const navigate = useNavigate()
@@ -31,6 +34,17 @@ export default function OverviewPage() {
   const createdFrom = dateRange[0].startOf('day').toISOString()
   const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
   const shouldPoll = dateRange[0].startOf('day').isBefore(dayjs().startOf('day').add(1, 'day')) && dateRange[1].startOf('day').add(1, 'day').isAfter(dayjs().startOf('day'))
+
+  useEffect(() => {
+    const params = new URLSearchParams({
+      from: dateRange[0].format('YYYY-MM-DD'),
+      to: dateRange[1].format('YYYY-MM-DD'),
+      page: String(page),
+      page_size: String(pageSize),
+    })
+    if (requestID) params.set('request_id', requestID)
+    setSearchParams(params, { replace: true })
+  }, [dateRange, page, pageSize, requestID, setSearchParams])
   const overview = useQuery({
     queryKey: ['overview'],
     queryFn: () => api<Overview>('/api/admin/overview'),
@@ -62,12 +76,12 @@ export default function OverviewPage() {
   }
 
   function openDetail(id: string) {
-    navigate(`/requests/${id}`, { state: { returnTo: location.pathname + location.search } })
+    navigate({ pathname: `/requests/${id}`, search: location.search }, { state: { returnTo: location.pathname + location.search } })
   }
 
   function closeDetail() {
     const returnTo = (location.state as { returnTo?: string } | null)?.returnTo
-    navigate(returnTo ?? '/requests', { replace: true })
+    navigate(returnTo ?? { pathname: '/requests', search: location.search }, { replace: true })
   }
 
   return (
@@ -115,4 +129,9 @@ export default function OverviewPage() {
       <RequestDrawer detail={detail.data} loading={detail.isPending} open={!!detailID} onClose={closeDetail} />
     </div>
   )
+}
+
+function positiveInteger(value: string | null, fallback: number): number {
+  const parsed = Number(value)
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback
 }
