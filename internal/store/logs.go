@@ -130,6 +130,34 @@ func (s *Store) CreateSecurityEvent(eventType, clientIP, userAgent, endpoint, re
 	return err
 }
 
+// CloseInterruptedRequests marks requests and attempts left in progress by a
+// previous process as failed. Only one process may own the database, so any
+// in_progress row at startup was abandoned by a crash or kill; leaving it
+// stranded would keep it out of retention pruning and pollute statistics.
+func (s *Store) CloseInterruptedRequests(now time.Time) (int, error) {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback()
+	completedAt := formatTime(now)
+	if _, err := tx.Exec(`UPDATE attempts SET status = 'failed', error_message = 'gateway exited before completion', completed_at = ? WHERE status = 'in_progress'`, completedAt); err != nil {
+		return 0, err
+	}
+	result, err := tx.Exec(`UPDATE requests SET status = 'failed', error_message = 'gateway exited before completion', completed_at = ? WHERE status = 'in_progress'`, completedAt)
+	if err != nil {
+		return 0, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return int(rows), nil
+}
+
 type RequestSummary struct {
 	ID               string     `json:"id"`
 	Status           string     `json:"status"`

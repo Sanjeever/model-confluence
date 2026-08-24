@@ -35,6 +35,14 @@ func run() error {
 	}
 	defer db.Close()
 
+	interrupted, err := db.CloseInterruptedRequests(time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("close interrupted requests: %w", err)
+	}
+	if interrupted > 0 {
+		slog.Info("interrupted requests marked failed", "requests", interrupted)
+	}
+
 	if cfg.Command == config.CommandResetPassword {
 		if err := db.ResetAdminPassword(cfg.AdminPassword); err != nil {
 			return fmt.Errorf("reset admin password: %w", err)
