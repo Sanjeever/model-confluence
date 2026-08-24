@@ -148,6 +148,11 @@ func (s *Store) MarkUpstreamKey(id int64, status, reason string, recoverAt *time
 	return err
 }
 
+func (s *Store) MarkModelCandidate(id int64, status, reason string) error {
+	_, err := s.db.Exec(`UPDATE model_candidates SET runtime_status = ?, runtime_reason = ?, updated_at = ? WHERE id = ?`, status, nullableString(reason), formatTime(time.Now()), id)
+	return err
+}
+
 func (s *Store) TouchUpstreamKey(id int64) error {
 	_, err := s.db.Exec(`UPDATE upstream_keys SET last_used_at = ? WHERE id = ?`, formatTime(time.Now()), id)
 	return err

@@ -674,7 +674,7 @@ func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) erro
 			if _, ok := existing[candidateID]; !ok {
 				return sql.ErrNoRows
 			}
-			if _, err := tx.Exec(`UPDATE model_candidates SET provider_id = ?, upstream_model = ?, position = ?, default_max_output_tokens = ?, max_output_tokens = ?, updated_at = ? WHERE id = ?`, candidate.ProviderID, candidate.UpstreamModel, position, candidate.DefaultMaxOutputTokens, candidate.MaxOutputTokens, now, candidateID); err != nil {
+			if _, err := tx.Exec(`UPDATE model_candidates SET provider_id = ?, upstream_model = ?, position = ?, default_max_output_tokens = ?, max_output_tokens = ?, runtime_status = 'available', runtime_reason = NULL, updated_at = ? WHERE id = ?`, candidate.ProviderID, candidate.UpstreamModel, position, candidate.DefaultMaxOutputTokens, candidate.MaxOutputTokens, now, candidateID); err != nil {
 				return err
 			}
 			delete(existing, candidateID)

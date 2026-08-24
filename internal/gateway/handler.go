@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/config"
@@ -26,6 +28,14 @@ type Handler struct {
 	maxBody           int64
 	streamIdleTimeout time.Duration
 	client            *http.Client
+	candidateMu       sync.Mutex
+	candidates        map[int64]candidateFailure
+}
+
+type candidateFailure struct {
+	count         int
+	cooldownUntil time.Time
+	probing       bool
 }
 
 func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.ClientIPResolver) *Handler {
@@ -34,7 +44,7 @@ func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.Client
 		Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
 		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout, IdleConnTimeout: 90 * time.Second,
 	}
-	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, client: &http.Client{Transport: transport}}
+	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure)}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -128,9 +138,14 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	}
 
 	position := 0
+	retryIndex := 0
 	var invalidResponseErr error
 	for index := 0; index < len(routes); index++ {
 		route := routes[index]
+		if (index == 0 || routes[index-1].CandidateID != route.CandidateID) && !h.candidateReady(route.CandidateID) {
+			index = skipCandidate(routes, index, route.CandidateID)
+			continue
+		}
 		var upstreamBody []byte
 		if route.UpstreamProtocol == inboundProtocol {
 			upstreamBody, err = rewriteModel(body, route.UpstreamModel)
@@ -175,8 +190,16 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		position++
 		response, err := h.client.Do(outbound)
 		if err != nil {
+			if r.Context().Err() != nil {
+				h.completeCancelled(attemptID, requestID, attemptStarted, started, r.Context().Err())
+				return
+			}
 			h.completeAttemptFailure(attemptID, attemptStarted, err)
+			h.candidateFailed(route.CandidateID)
 			index = skipCandidate(routes, index, route.CandidateID)
+			if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+				return
+			}
 			continue
 		}
 		firstByte := time.Since(attemptStarted).Milliseconds()
@@ -185,17 +208,39 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			response.Body.Close()
 			if readErr != nil {
 				h.completeAttemptFailure(attemptID, attemptStarted, readErr)
+				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+					return
+				}
 				continue
 			}
 			h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "failed", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: string(responseBody), CompletedAt: time.Now().UTC()})
+			code := extractErrorCode(responseBody)
+			if code == "model_not_found" || code == "model_not_supported" {
+				_ = h.store.MarkModelCandidate(route.CandidateID, "config_error", code)
+				h.candidateSucceeded(route.CandidateID)
+				index = skipCandidate(routes, index, route.CandidateID)
+				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+					return
+				}
+				continue
+			}
 			if shouldTryNextKey(response.StatusCode) {
+				h.candidateSucceeded(route.CandidateID)
 				h.updateKeyAfterError(route, response.StatusCode, responseBody, response.Header)
+				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+					return
+				}
 				continue
 			}
 			if response.StatusCode >= 500 {
+				h.candidateFailed(route.CandidateID)
 				index = skipCandidate(routes, index, route.CandidateID)
+				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+					return
+				}
 				continue
 			}
+			h.candidateSucceeded(route.CandidateID)
 			h.finishError(w, inboundProtocol, requestID, started, response.StatusCode, "upstream_error", string(responseBody))
 			return
 		}
@@ -207,16 +252,91 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			err = h.proxyBuffered(w, response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
 		}
 		if err == nil {
+			h.candidateSucceeded(route.CandidateID)
 			return
 		}
 		invalidResponseErr = err
 		index = skipCandidate(routes, index, route.CandidateID)
+		if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+			return
+		}
 	}
 	if invalidResponseErr != nil {
 		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadGateway, "invalid_upstream_response", invalidResponseErr.Error())
 		return
 	}
 	h.finishError(w, inboundProtocol, requestID, started, http.StatusServiceUnavailable, "upstream_unavailable", "所有可用密钥或候选均调用失败")
+}
+
+func (h *Handler) waitBeforeRetry(ctx context.Context, retryIndex *int, hasNext bool, requestID string, started time.Time) bool {
+	if !hasNext {
+		return true
+	}
+	delay := retryBackoff(*retryIndex)
+	*retryIndex++
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: ctx.Err().Error(), CompletedAt: time.Now().UTC()})
+		return false
+	}
+}
+
+func retryBackoff(retryIndex int) time.Duration {
+	limit := 100 * time.Millisecond
+	for range min(retryIndex, 5) {
+		limit *= 2
+	}
+	if limit > 2*time.Second {
+		limit = 2 * time.Second
+	}
+	floor := limit / 2
+	return floor + time.Duration(rand.Int64N(int64(limit-floor)+1))
+}
+
+func (h *Handler) candidateReady(candidateID int64) bool {
+	h.candidateMu.Lock()
+	defer h.candidateMu.Unlock()
+	state, ok := h.candidates[candidateID]
+	if !ok || state.cooldownUntil.IsZero() {
+		return true
+	}
+	if time.Now().Before(state.cooldownUntil) || state.probing {
+		return false
+	}
+	state.probing = true
+	h.candidates[candidateID] = state
+	return true
+}
+
+func (h *Handler) candidateFailed(candidateID int64) {
+	h.candidateMu.Lock()
+	defer h.candidateMu.Unlock()
+	if h.candidates == nil {
+		h.candidates = make(map[int64]candidateFailure)
+	}
+	state := h.candidates[candidateID]
+	state.count++
+	if state.count >= 3 {
+		state.cooldownUntil = time.Now().Add(30 * time.Second)
+		state.probing = false
+	}
+	h.candidates[candidateID] = state
+}
+
+func (h *Handler) candidateSucceeded(candidateID int64) {
+	h.candidateMu.Lock()
+	delete(h.candidates, candidateID)
+	h.candidateMu.Unlock()
+}
+
+func (h *Handler) completeCancelled(attemptID int64, requestID string, attemptStarted, started time.Time, err error) {
+	now := time.Now().UTC()
+	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "cancelled", TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now})
+	h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now})
 }
 
 func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) error {
@@ -468,11 +588,23 @@ func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, bod
 		h.store.MarkUpstreamKey(route.Key.ID, "quota_exhausted", code, nil)
 		return
 	}
-	recoverAt := time.Now().Add(60 * time.Second)
-	if retryAfter, err := time.ParseDuration(headers.Get("Retry-After") + "s"); err == nil {
-		recoverAt = time.Now().Add(retryAfter)
+	now := time.Now()
+	recoverAt := now.Add(60 * time.Second)
+	if retryAfter, ok := parseRetryAfter(headers.Get("Retry-After"), now); ok {
+		recoverAt = retryAfter
 	}
 	h.store.MarkUpstreamKey(route.Key.ID, "rate_limited", code, &recoverAt)
+}
+
+func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
+	if seconds, err := time.ParseDuration(value + "s"); err == nil && seconds >= 0 {
+		return now.Add(seconds), true
+	}
+	parsed, err := http.ParseTime(value)
+	if err != nil || parsed.Before(now) {
+		return time.Time{}, false
+	}
+	return parsed, true
 }
 
 type requestMetadata struct {

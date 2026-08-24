@@ -66,6 +66,55 @@ func TestShouldTryNextKeyOnPaymentRequired(t *testing.T) {
 	}
 }
 
+func TestRetryBackoffStaysWithinExponentialCap(t *testing.T) {
+	for retryIndex, limit := range []time.Duration{100 * time.Millisecond, 200 * time.Millisecond, 400 * time.Millisecond, 800 * time.Millisecond, 1600 * time.Millisecond, 2 * time.Second, 2 * time.Second} {
+		for range 20 {
+			delay := retryBackoff(retryIndex)
+			if delay < 0 || delay > limit {
+				t.Fatalf("retry %d returned delay %s above limit %s", retryIndex, delay, limit)
+			}
+		}
+	}
+}
+
+func TestCandidateCooldownAllowsSingleProbe(t *testing.T) {
+	h := &Handler{candidates: make(map[int64]candidateFailure)}
+	h.candidateFailed(7)
+	h.candidateFailed(7)
+	h.candidateFailed(7)
+	if h.candidateReady(7) {
+		t.Fatal("candidate should be cooling down")
+	}
+	h.candidateMu.Lock()
+	state := h.candidates[7]
+	state.cooldownUntil = time.Now().Add(-time.Second)
+	h.candidates[7] = state
+	h.candidateMu.Unlock()
+	if !h.candidateReady(7) {
+		t.Fatal("candidate should allow a probe after cooldown")
+	}
+	if h.candidateReady(7) {
+		t.Fatal("candidate should allow only one concurrent probe")
+	}
+	h.candidateSucceeded(7)
+	if !h.candidateReady(7) {
+		t.Fatal("successful probe should reset candidate state")
+	}
+}
+
+func TestParseRetryAfterSupportsSecondsAndHTTPDate(t *testing.T) {
+	now := time.Date(2026, 8, 24, 8, 0, 0, 0, time.UTC)
+	seconds, ok := parseRetryAfter("45", now)
+	if !ok || !seconds.Equal(now.Add(45*time.Second)) {
+		t.Fatalf("unexpected seconds result: %s, %t", seconds, ok)
+	}
+	httpDate := now.Add(2 * time.Minute).Format(http.TimeFormat)
+	parsed, ok := parseRetryAfter(httpDate, now)
+	if !ok || !parsed.Equal(now.Add(2*time.Minute)) {
+		t.Fatalf("unexpected HTTP date result: %s, %t", parsed, ok)
+	}
+}
+
 func TestUpdateKeyAfterPaymentRequiredMarksQuota(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "model-confluence.db"))
 	if err != nil {
