@@ -6,6 +6,8 @@ import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icon
 import dayjs, { type Dayjs } from 'dayjs'
 import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
 import RequestDrawer, { protocolName, statusName } from '../components/RequestDrawer'
+import MetricCard from '../components/MetricCard'
+import { formatCount } from '../format'
 
 const metrics: Array<{ key: keyof Overview; label: string }> = [
   { key: 'access_keys', label: '访问密钥' },
@@ -81,11 +83,7 @@ export default function OverviewPage() {
       <Row gutter={[12, 12]}>
         {metrics.map((metric, index) => (
           <Col xs={12} xl={8} key={metric.key}>
-            <Card className="relative overflow-hidden" styles={{ body: { minHeight: 132 } }}>
-              <div className="absolute right-0 top-0 h-full w-1 bg-[#d7783d]" style={{ opacity: .25 + index * .15 }} />
-              <div className="mb-6 text-sm text-[#7c8d86] sm:mb-8">{metric.label}</div>
-              {overview.isPending ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{overview.data?.[metric.key] ?? 0}</div>}
-            </Card>
+            <MetricCard label={metric.label} value={formatCount(overview.data?.[metric.key])} opacity={.25 + index * .15} loading={overview.isPending} />
           </Col>
         ))}
       </Row>

@@ -6,6 +6,8 @@ import { ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import { api, type PerformanceOverview, type PerformanceRequest } from '../api'
 import { protocolName, statusName } from '../components/RequestDrawer'
+import MetricCard from '../components/MetricCard'
+import { formatCount, formatDuration, formatPercent } from '../format'
 
 const statusItems = [
   { key: 'completed', label: '已完成', color: '#4d9b72' },
@@ -54,10 +56,10 @@ export default function PerformancePage() {
       {performance.isError && <Alert className="mb-6" type="error" showIcon message="性能数据加载失败" description={(performance.error as Error).message} />}
 
       <Row gutter={[12, 12]}>
-        <Col xs={12} xl={6}><MetricCard label="请求数" value={formatCount(overview?.request_count)} accent="#d7783d" opacity={.25} loading={performance.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="成功率" value={formatPercent(overview?.success_rate)} accent="#d7783d" opacity={.4} loading={performance.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="首内容 P95" value={formatDuration(overview?.first_content_latency.p95)} accent="#d7783d" opacity={.55} loading={performance.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="总耗时 P95" value={formatDuration(overview?.total_latency.p95)} accent="#d7783d" opacity={.7} loading={performance.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="请求数" value={formatCount(overview?.request_count)} opacity={.25} loading={performance.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="成功率" value={formatPercent(overview?.success_rate)} opacity={.4} loading={performance.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="首内容 P95" value={formatDuration(overview?.first_content_latency.p95)} opacity={.55} loading={performance.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="总耗时 P95" value={formatDuration(overview?.total_latency.p95)} opacity={.7} loading={performance.isPending} /></Col>
       </Row>
 
       <Card className="!mt-6" styles={{ body: { padding: 20 } }}>
@@ -108,14 +110,6 @@ export default function PerformancePage() {
   )
 }
 
-function MetricCard({ label, value, accent, opacity, loading }: { label: string; value: string; accent: string; opacity: number; loading: boolean }) {
-  return <Card className="relative overflow-hidden" styles={{ body: { minHeight: 132 } }}>
-    <div className="absolute right-0 top-0 h-full w-1" style={{ backgroundColor: accent, opacity }} />
-    <div className="mb-6 text-sm text-[#7c8d86] sm:mb-8">{label}</div>
-    {loading ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{value}</div>}
-  </Card>
-}
-
 function AttentionCard({ record, onClick }: { record: PerformanceRequest; onClick: () => void }) {
   return <Card size="small" className="cursor-pointer" onClick={onClick}>
     <div className="mb-3 flex items-start justify-between gap-3">
@@ -131,21 +125,6 @@ function AttentionCard({ record, onClick }: { record: PerformanceRequest; onClic
     </Space>
     {record.error_message && <div className="mt-3 truncate text-xs text-[#c65d4b]" title={record.error_message}>{record.error_message}</div>}
   </Card>
-}
-
-function formatCount(value: number | undefined): string {
-  return value == null ? '—' : value.toLocaleString()
-}
-
-function formatPercent(value: number | null | undefined): string {
-  return value == null ? '—' : `${(value * 100).toFixed(1)}%`
-}
-
-function formatDuration(value: number | null | undefined): string {
-  if (value == null) return '—'
-  if (value < 1000) return `${value} ms`
-  const seconds = value / 1000
-  return `${seconds.toFixed(seconds >= 10 ? 1 : 2)} s`
 }
 
 function statusColor(value: string): string | undefined {

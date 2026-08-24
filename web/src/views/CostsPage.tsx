@@ -5,6 +5,8 @@ import { ReloadOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
 import { api, type RequestDetail, type UsageGroup, type UsagePage } from '../api'
 import RequestDrawer from '../components/RequestDrawer'
+import MetricCard from '../components/MetricCard'
+import { formatCount, formatPercent } from '../format'
 
 export default function CostsPage() {
   const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(() => {
@@ -51,10 +53,10 @@ export default function CostsPage() {
       {usage.isError && <Alert className="mb-6" type="error" showIcon message="用量数据加载失败" description={(usage.error as Error).message} />}
 
       <Row gutter={[12, 12]}>
-        <Col xs={12} xl={6}><MetricCard label="请求数" value={formatCount(summary?.request_count)} accent="#d7783d" opacity={.25} loading={usage.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="总 Token" value={formatCount(summary?.usage.total_tokens)} accent="#d7783d" opacity={.4} loading={usage.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="输入 Token" value={formatCount(summary?.usage.input_tokens)} accent="#d7783d" opacity={.55} loading={usage.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="输出 Token" value={formatCount(summary?.usage.output_tokens)} accent="#d7783d" opacity={.7} loading={usage.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="请求数" value={formatCount(summary?.request_count)} opacity={.25} loading={usage.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="总 Token" value={formatCount(summary?.usage.total_tokens)} opacity={.4} loading={usage.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="输入 Token" value={formatCount(summary?.usage.input_tokens)} opacity={.55} loading={usage.isPending} /></Col>
+        <Col xs={12} xl={6}><MetricCard label="输出 Token" value={formatCount(summary?.usage.output_tokens)} opacity={.7} loading={usage.isPending} /></Col>
       </Row>
 
       <Card className="!mt-6" styles={{ body: { padding: 20 } }}>
@@ -110,14 +112,6 @@ export default function CostsPage() {
   )
 }
 
-function MetricCard({ label, value, accent, opacity, loading }: { label: string; value: string; accent: string; opacity: number; loading: boolean }) {
-  return <Card className="relative overflow-hidden" styles={{ body: { minHeight: 132 } }}>
-    <div className="absolute right-0 top-0 h-full w-1" style={{ backgroundColor: accent, opacity }} />
-    <div className="mb-6 text-sm text-[#7c8d86] sm:mb-8">{label}</div>
-    {loading ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{value}</div>}
-  </Card>
-}
-
 function CacheItem({ label, value, color }: { label: string; value: number; color: string }) {
   return <div className="flex items-center gap-2 text-sm"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} /><span className="text-[#7c8d86]">{label}</span><strong className="ml-auto font-mono">{formatCount(value)}</strong></div>
 }
@@ -142,12 +136,4 @@ function UsageCard({ record }: { record: UsageGroup }) {
 
 function TokenTag({ label, value }: { label: string; value: number }) {
   return <Tag>{label} {formatCount(value)}</Tag>
-}
-
-function formatCount(value: number | undefined): string {
-  return value == null ? '—' : value.toLocaleString()
-}
-
-function formatPercent(value: number): string {
-  return `${(value * 100).toFixed(1)}%`
 }

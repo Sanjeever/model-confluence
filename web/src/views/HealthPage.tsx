@@ -2,6 +2,8 @@ import { useQuery } from '@tanstack/react-query'
 import { Alert, Button, Card, Col, Empty, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { api, type CandidateHealth, type HealthOverview, type UpstreamKeyHealth } from '../api'
+import MetricCard from '../components/MetricCard'
+import { formatCount } from '../format'
 
 const keyStatusMeta: Record<string, { label: string; color: string }> = {
   available: { label: '可用', color: 'success' },
@@ -27,9 +29,9 @@ export default function HealthPage() {
       {health.isError && <Alert className="mb-6" type="error" showIcon message="健康数据加载失败" description={(health.error as Error).message} />}
 
       <Row gutter={[12, 12]}>
-        <Col xs={12} xl={8}><MetricCard label="异常密钥" value={formatCount(health.data?.abnormal_key_count)} accent="#d7783d" opacity={.25} loading={health.isPending} /></Col>
-        <Col xs={12} xl={8}><MetricCard label="候选近期失败" value={formatCount(health.data?.failed_candidates)} accent="#d7783d" opacity={.55} loading={health.isPending} /></Col>
-        <Col xs={12} xl={8}><MetricCard label="无可用路由模型" value={formatCount(health.data?.unrouted_models.length)} accent="#d7783d" opacity={.85} loading={health.isPending} /></Col>
+        <Col xs={12} xl={8}><MetricCard label="异常密钥" value={formatCount(health.data?.abnormal_key_count)} opacity={.25} loading={health.isPending} /></Col>
+        <Col xs={12} xl={8}><MetricCard label="候选近期失败" value={formatCount(health.data?.failed_candidates)} opacity={.55} loading={health.isPending} /></Col>
+        <Col xs={12} xl={8}><MetricCard label="无可用路由模型" value={formatCount(health.data?.unrouted_models.length)} opacity={.85} loading={health.isPending} /></Col>
       </Row>
 
       <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">密钥池状态</Typography.Title>
@@ -85,16 +87,4 @@ function KeyStatusTag({ record }: { record: UpstreamKeyHealth }) {
   if (!record.enabled) return <Tag>已停用</Tag>
   const status = keyStatusMeta[record.runtime_status] ?? { label: record.runtime_status, color: 'default' as const }
   return <Tag color={status.color}>{status.label}</Tag>
-}
-
-function MetricCard({ label, value, accent, opacity, loading }: { label: string; value: string; accent: string; opacity: number; loading: boolean }) {
-  return <Card className="relative overflow-hidden" styles={{ body: { minHeight: 132 } }}>
-    <div className="absolute right-0 top-0 h-full w-1" style={{ backgroundColor: accent, opacity }} />
-    <div className="mb-6 text-sm text-[#7c8d86] sm:mb-8">{label}</div>
-    {loading ? <Skeleton.Input active size="large" /> : <div className="font-mono text-3xl font-medium sm:text-4xl">{value}</div>}
-  </Card>
-}
-
-function formatCount(value: number | undefined): string {
-  return value == null ? '—' : value.toLocaleString()
 }
