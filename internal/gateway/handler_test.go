@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -17,6 +19,9 @@ import (
 type recordingResponseWriter struct {
 	header    http.Header
 	committed bool
+	body      bytes.Buffer
+	flushes   int
+	flushed   chan struct{}
 }
 
 func (w *recordingResponseWriter) Header() http.Header {
@@ -27,11 +32,21 @@ func (w *recordingResponseWriter) Write(body []byte) (int, error) {
 	if !w.committed {
 		w.WriteHeader(http.StatusOK)
 	}
-	return len(body), nil
+	return w.body.Write(body)
 }
 
 func (w *recordingResponseWriter) WriteHeader(int) {
 	w.committed = true
+}
+
+func (w *recordingResponseWriter) Flush() {
+	w.flushes++
+	if w.flushed != nil {
+		select {
+		case w.flushed <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func TestProxyConvertedEventsDelaysCommitBeforeConversionError(t *testing.T) {
@@ -44,10 +59,12 @@ func TestProxyConvertedEventsDelaysCommitBeforeConversionError(t *testing.T) {
 		"event: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"image\"}}\n\n",
 	}, "")
 	w := &recordingResponseWriter{header: make(http.Header)}
-	var upstreamLog, clientLog bytes.Buffer
+	streamResponse := newStreamResponse(0)
+	defer streamResponse.Close()
+	var upstreamLog bytes.Buffer
 	var firstContent *int64
 
-	status, message, committed := proxyConvertedEvents(w, context.Background(), bufio.NewReader(strings.NewReader(stream)), nil, converter, http.StatusOK, nil, time.Now(), &upstreamLog, &clientLog, &firstContent)
+	status, message, committed := proxyConvertedEvents(w, context.Background(), bufio.NewReader(strings.NewReader(stream)), streamResponse, converter, http.StatusOK, nil, time.Now(), &upstreamLog, &firstContent)
 
 	if status != "failed" || message != `unsupported Messages stream block "image"` {
 		t.Fatalf("unexpected result: status=%q message=%q", status, message)
@@ -55,8 +72,67 @@ func TestProxyConvertedEventsDelaysCommitBeforeConversionError(t *testing.T) {
 	if committed || w.committed {
 		t.Fatal("response was committed before the conversion error")
 	}
-	if clientLog.Len() != 0 {
-		t.Fatalf("client received partial stream: %s", clientLog.Bytes())
+	if len(streamResponse.Body()) != 0 {
+		t.Fatalf("client received partial stream: %s", streamResponse.Body())
+	}
+}
+
+func TestDoUpstreamWritesHeartbeatWhileWaitingForHeaders(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		time.Sleep(30 * time.Millisecond)
+		w.Header().Set("Content-Type", "text/event-stream")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+
+	request, err := http.NewRequest(http.MethodPost, upstream.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := &recordingResponseWriter{header: make(http.Header)}
+	stream := newStreamResponse(5 * time.Millisecond)
+	defer stream.Close()
+	h := &Handler{client: upstream.Client()}
+
+	response, err := h.doUpstream(w, request, stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+
+	if !strings.Contains(w.body.String(), ": keep-alive\n\n") {
+		t.Fatalf("heartbeat was not written: %q", w.body.String())
+	}
+	if w.flushes == 0 {
+		t.Fatal("heartbeat was not flushed")
+	}
+}
+
+func TestProxyPassthroughWritesHeartbeatWhileWaitingForFirstEvent(t *testing.T) {
+	reader, writer := io.Pipe()
+	w := &recordingResponseWriter{header: make(http.Header), flushed: make(chan struct{}, 1)}
+	stream := newStreamResponse(5 * time.Millisecond)
+	defer stream.Close()
+	go func() {
+		<-w.flushed
+		_, _ = io.WriteString(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		_ = writer.Close()
+	}()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	var upstreamLog bytes.Buffer
+	var firstContent *int64
+
+	status, message := proxyPassthroughEvents(w, ctx, bufio.NewReader(reader), stream, "virtual-model", time.Now(), &upstreamLog, &firstContent)
+
+	if status != "completed" || message != "" {
+		t.Fatalf("unexpected result: status=%q message=%q", status, message)
+	}
+	body := w.body.String()
+	heartbeatIndex := strings.Index(body, ": keep-alive\n\n")
+	contentIndex := strings.Index(body, `"content":"ok"`)
+	if heartbeatIndex < 0 || contentIndex < 0 || heartbeatIndex > contentIndex {
+		t.Fatalf("heartbeat did not precede content: %q", body)
 	}
 }
 

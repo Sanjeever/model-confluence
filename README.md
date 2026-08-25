@@ -241,6 +241,7 @@ git push origin v1.1.0
 | `--connect-timeout` | — | `10s` | 上游连接超时 |
 | `--response-header-timeout` | — | `5m` | 等待上游响应头超时 |
 | `--stream-idle-timeout` | — | `5m` | 上游流式空闲超时 |
+| `--stream-heartbeat-interval` | — | `0` | SSE 心跳间隔；`0` 表示关闭 |
 | `--max-request-bytes` | — | `67108864` | 入站请求体大小上限 |
 | `--log-retention-days` | `MODEL_CONFLUENCE_LOG_RETENTION_DAYS` | `0` | 完整日志载荷保留天数；`0` 表示永久保留，过期后保留结构化元数据 |
 

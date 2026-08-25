@@ -19,16 +19,17 @@ const (
 )
 
 type Config struct {
-	Command               Command
-	ListenAddress         string
-	DatabasePath          string
-	AdminPassword         string
-	TrustedProxyCIDRs     []string
-	ConnectTimeout        time.Duration
-	ResponseHeaderTimeout time.Duration
-	StreamIdleTimeout     time.Duration
-	MaxRequestBytes       int64
-	LogRetentionDays      int
+	Command                 Command
+	ListenAddress           string
+	DatabasePath            string
+	AdminPassword           string
+	TrustedProxyCIDRs       []string
+	ConnectTimeout          time.Duration
+	ResponseHeaderTimeout   time.Duration
+	StreamIdleTimeout       time.Duration
+	StreamHeartbeatInterval time.Duration
+	MaxRequestBytes         int64
+	LogRetentionDays        int
 }
 
 func Load(args []string) (Config, error) {
@@ -51,6 +52,7 @@ func Load(args []string) (Config, error) {
 	connectTimeout := set.Duration("connect-timeout", 10*time.Second, "upstream connect timeout")
 	responseHeaderTimeout := set.Duration("response-header-timeout", 5*time.Minute, "upstream response header timeout")
 	streamIdleTimeout := set.Duration("stream-idle-timeout", 5*time.Minute, "upstream stream idle timeout")
+	streamHeartbeatInterval := set.Duration("stream-heartbeat-interval", 0, "SSE heartbeat interval; 0 disables heartbeats")
 	maxRequestBytes := set.Int64("max-request-bytes", 64<<20, "maximum inbound request body size")
 	defaultLogRetentionDays, err := envInt("MODEL_CONFLUENCE_LOG_RETENTION_DAYS", 0)
 	if err != nil {
@@ -70,6 +72,9 @@ func Load(args []string) (Config, error) {
 	if *logRetentionDays < 0 {
 		return Config{}, errors.New("log-retention-days must not be negative")
 	}
+	if *streamHeartbeatInterval < 0 {
+		return Config{}, errors.New("stream-heartbeat-interval must not be negative")
+	}
 
 	absDataDir, err := filepath.Abs(*dataDir)
 	if err != nil {
@@ -77,16 +82,17 @@ func Load(args []string) (Config, error) {
 	}
 
 	return Config{
-		Command:               command,
-		ListenAddress:         *listen,
-		DatabasePath:          filepath.Join(absDataDir, "model-confluence.db"),
-		AdminPassword:         *password,
-		TrustedProxyCIDRs:     splitCSV(*trustedProxies),
-		ConnectTimeout:        *connectTimeout,
-		ResponseHeaderTimeout: *responseHeaderTimeout,
-		StreamIdleTimeout:     *streamIdleTimeout,
-		MaxRequestBytes:       *maxRequestBytes,
-		LogRetentionDays:      *logRetentionDays,
+		Command:                 command,
+		ListenAddress:           *listen,
+		DatabasePath:            filepath.Join(absDataDir, "model-confluence.db"),
+		AdminPassword:           *password,
+		TrustedProxyCIDRs:       splitCSV(*trustedProxies),
+		ConnectTimeout:          *connectTimeout,
+		ResponseHeaderTimeout:   *responseHeaderTimeout,
+		StreamIdleTimeout:       *streamIdleTimeout,
+		StreamHeartbeatInterval: *streamHeartbeatInterval,
+		MaxRequestBytes:         *maxRequestBytes,
+		LogRetentionDays:        *logRetentionDays,
 	}, nil
 }
 

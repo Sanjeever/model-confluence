@@ -25,13 +25,14 @@ import (
 )
 
 type Handler struct {
-	store             *store.Store
-	clientIP          *httpx.ClientIPResolver
-	maxBody           int64
-	streamIdleTimeout time.Duration
-	client            *http.Client
-	candidateMu       sync.Mutex
-	candidates        map[int64]candidateFailure
+	store                   *store.Store
+	clientIP                *httpx.ClientIPResolver
+	maxBody                 int64
+	streamIdleTimeout       time.Duration
+	streamHeartbeatInterval time.Duration
+	client                  *http.Client
+	candidateMu             sync.Mutex
+	candidates              map[int64]candidateFailure
 }
 
 type candidateFailure struct {
@@ -46,7 +47,7 @@ func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.Client
 		Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
 		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout, IdleConnTimeout: 90 * time.Second,
 	}
-	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure)}
+	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, streamHeartbeatInterval: cfg.StreamHeartbeatInterval, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure)}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -253,6 +254,18 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	position := 0
 	retryIndex := 0
 	var invalidResponseErr error
+	var stream *streamResponse
+	if requestMeta.Stream {
+		stream = newStreamResponse(h.streamHeartbeatInterval)
+		defer stream.Close()
+	}
+	finishError := func(status int, code, message string) {
+		if stream != nil && stream.Committed() {
+			h.finishStreamError(w, inboundProtocol, requestID, started, stream, code, message)
+			return
+		}
+		h.finishError(w, inboundProtocol, requestID, started, status, code, message)
+	}
 	for index := 0; index < len(routes); index++ {
 		route := routes[index]
 		if (index == 0 || routes[index-1].CandidateID != route.CandidateID) && !h.candidateReady(route.CandidateID) {
@@ -266,19 +279,19 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			upstreamBody, err = protocol.ConvertRequest(body, inboundProtocol, route.UpstreamProtocol, route.UpstreamModel, routeDefaultMax(route))
 		}
 		if err != nil {
-			h.finishError(w, inboundProtocol, requestID, started, http.StatusBadRequest, "invalid_request", err.Error())
+			finishError(http.StatusBadRequest, "invalid_request", err.Error())
 			return
 		}
 		if requestMeta.Stream && route.UpstreamProtocol == protocol.Chat && route.ProtocolConfig.SupportsStreamUsage {
 			upstreamBody, err = includeStreamUsage(upstreamBody)
 			if err != nil {
-				h.finishError(w, inboundProtocol, requestID, started, http.StatusBadRequest, "invalid_request", err.Error())
+				finishError(http.StatusBadRequest, "invalid_request", err.Error())
 				return
 			}
 		}
 		outbound, err := http.NewRequestWithContext(r.Context(), http.MethodPost, route.UpstreamEndpoint, bytes.NewReader(upstreamBody))
 		if err != nil {
-			h.finishError(w, inboundProtocol, requestID, started, http.StatusInternalServerError, "gateway_error", err.Error())
+			finishError(http.StatusInternalServerError, "gateway_error", err.Error())
 			return
 		}
 		copyRequestHeaders(outbound.Header, r.Header)
@@ -297,14 +310,18 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC(),
 		})
 		if err != nil {
-			h.finishError(w, inboundProtocol, requestID, started, http.StatusInternalServerError, "logging_error", err.Error())
+			finishError(http.StatusInternalServerError, "logging_error", err.Error())
 			return
 		}
 		position++
-		response, err := h.client.Do(outbound)
+		response, err := h.doUpstream(w, outbound, stream)
 		if err != nil {
-			if r.Context().Err() != nil {
-				h.completeCancelled(attemptID, requestID, attemptStarted, started, r.Context().Err())
+			if r.Context().Err() != nil || errors.Is(err, errClientStreamWrite) {
+				cancelErr := r.Context().Err()
+				if cancelErr == nil {
+					cancelErr = err
+				}
+				h.completeCancelled(w, stream, attemptID, requestID, attemptStarted, started, cancelErr)
 				return
 			}
 			h.completeAttemptFailure(attemptID, attemptStarted, err)
@@ -354,13 +371,13 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				continue
 			}
 			h.candidateSucceeded(route.CandidateID)
-			h.finishError(w, inboundProtocol, requestID, started, response.StatusCode, "upstream_error", string(responseBody))
+			finishError(response.StatusCode, "upstream_error", string(responseBody))
 			return
 		}
 
 		_ = h.store.TouchUpstreamKey(route.Key.ID)
 		if requestMeta.Stream {
-			err = h.proxyStream(w, r.Context(), response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
+			err = h.proxyStream(w, r.Context(), response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte, stream)
 		} else {
 			err = h.proxyBuffered(w, response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
 		}
@@ -375,10 +392,10 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		}
 	}
 	if invalidResponseErr != nil {
-		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadGateway, "invalid_upstream_response", invalidResponseErr.Error())
+		finishError(http.StatusBadGateway, "invalid_upstream_response", invalidResponseErr.Error())
 		return
 	}
-	h.finishError(w, inboundProtocol, requestID, started, http.StatusServiceUnavailable, "upstream_unavailable", "所有可用密钥或候选均调用失败")
+	finishError(http.StatusServiceUnavailable, "upstream_unavailable", "所有可用密钥或候选均调用失败")
 }
 
 func (h *Handler) waitBeforeRetry(ctx context.Context, retryIndex *int, hasNext bool, requestID string, started time.Time) bool {
@@ -446,10 +463,16 @@ func (h *Handler) candidateSucceeded(candidateID int64) {
 	h.candidateMu.Unlock()
 }
 
-func (h *Handler) completeCancelled(attemptID int64, requestID string, attemptStarted, started time.Time, err error) {
+func (h *Handler) completeCancelled(w http.ResponseWriter, stream *streamResponse, attemptID int64, requestID string, attemptStarted, started time.Time, err error) {
 	now := time.Now().UTC()
 	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "cancelled", TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now})
-	h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now})
+	result := store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now}
+	if stream != nil && stream.Committed() {
+		result.ResponseStatus = stream.Status()
+		result.ResponseHeaders = marshalHeaders(w.Header())
+		result.ResponseBody = stream.Body()
+	}
+	h.store.CompleteRequest(result)
 }
 
 func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) error {
@@ -491,33 +514,34 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 	return nil
 }
 
-func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) error {
+func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64, stream *streamResponse) error {
 	var body io.ReadCloser = response.Body
 	if h.streamIdleTimeout > 0 {
 		body = newIdleTimeoutReader(response.Body, h.streamIdleTimeout)
 	}
 	defer body.Close()
 	w.Header().Set("X-Accel-Buffering", "no")
-	flusher, _ := w.(http.Flusher)
 	reader := bufio.NewReader(body)
-	var upstreamLog, clientLog bytes.Buffer
+	var upstreamLog bytes.Buffer
 	var firstContent *int64
 	status := "completed"
 	errorMessage := ""
 	clientResponseStatus := response.StatusCode
 	committed := false
 	if upstreamProtocol == inboundProtocol {
-		copyResponseHeaders(w.Header(), response.Header)
-		w.Header().Del("Content-Length")
-		w.WriteHeader(response.StatusCode)
+		if !stream.Committed() {
+			copyResponseHeaders(w.Header(), response.Header)
+			w.Header().Del("Content-Length")
+			stream.Commit(w, response.StatusCode)
+		}
 		committed = true
-		status, errorMessage = proxyPassthroughEvents(w, ctx, reader, flusher, virtualModel, started, &upstreamLog, &clientLog, &firstContent)
+		status, errorMessage = proxyPassthroughEvents(w, ctx, reader, stream, virtualModel, started, &upstreamLog, &firstContent)
 	} else {
 		converter, err := protocol.NewStreamConverter(upstreamProtocol, inboundProtocol, virtualModel)
 		if err != nil {
 			status, errorMessage = "failed", err.Error()
 		} else {
-			status, errorMessage, committed = proxyConvertedEvents(w, ctx, reader, flusher, converter, response.StatusCode, response.Header, started, &upstreamLog, &clientLog, &firstContent)
+			status, errorMessage, committed = proxyConvertedEvents(w, ctx, reader, stream, converter, response.StatusCode, response.Header, started, &upstreamLog, &firstContent)
 		}
 	}
 	usage, rawUsage, usageErr := protocol.ExtractUsage(upstreamLog.Bytes(), upstreamProtocol, true)
@@ -529,7 +553,11 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 	if status == "failed" && !committed {
 		return errors.New(errorMessage)
 	}
-	h.store.CompleteRequest(requestResult(requestID, status, clientResponseStatus, marshalHeaders(w.Header()), clientLog.Bytes(), firstContent, total, errorMessage, usage))
+	if status == "failed" {
+		stream.WriteError(w, inboundProtocol, "invalid_upstream_response", errorMessage, requestID)
+		clientResponseStatus = stream.Status()
+	}
+	h.store.CompleteRequest(requestResult(requestID, status, clientResponseStatus, marshalHeaders(w.Header()), stream.Body(), firstContent, total, errorMessage, usage))
 	return nil
 }
 
@@ -550,22 +578,35 @@ func int64Pointer(value *int) *int64 {
 	return &converted
 }
 
-func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, flusher http.Flusher, virtualModel string, started time.Time, upstreamLog, clientLog *bytes.Buffer, firstContent **int64) (string, string) {
+func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, stream *streamResponse, virtualModel string, started time.Time, upstreamLog *bytes.Buffer, firstContent **int64) (string, string) {
+	readCtx, cancelRead := context.WithCancel(ctx)
+	defer cancelRead()
+	lines := readStreamLines(readCtx, reader)
 	for {
-		line, err := reader.ReadBytes('\n')
+		var line []byte
+		var err error
+		select {
+		case result, ok := <-lines:
+			if !ok {
+				return "cancelled", ctx.Err().Error()
+			}
+			line, err = result.line, result.err
+		case <-stream.Heartbeat():
+			if writeErr := stream.WriteHeartbeat(w); writeErr != nil {
+				return "cancelled", writeErr.Error()
+			}
+		case <-ctx.Done():
+			return "cancelled", ctx.Err().Error()
+		}
 		if len(line) > 0 {
 			upstreamLog.Write(line)
 			clientLine := rewriteSSEModel(line, virtualModel)
-			clientLog.Write(clientLine)
 			if *firstContent == nil && semanticSSELine(clientLine) {
 				value := time.Since(started).Milliseconds()
 				*firstContent = &value
 			}
-			if _, writeErr := w.Write(clientLine); writeErr != nil {
+			if writeErr := stream.Write(w, clientLine); writeErr != nil {
 				return "cancelled", writeErr.Error()
-			}
-			if flusher != nil {
-				flusher.Flush()
 			}
 		}
 		if err != nil {
@@ -582,10 +623,27 @@ func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *
 	}
 }
 
-func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, flusher http.Flusher, converter *protocol.StreamConverter, responseStatus int, responseHeaders http.Header, started time.Time, upstreamLog, clientLog *bytes.Buffer, firstContent **int64) (string, string, bool) {
+func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, stream *streamResponse, converter *protocol.StreamConverter, responseStatus int, responseHeaders http.Header, started time.Time, upstreamLog *bytes.Buffer, firstContent **int64) (string, string, bool) {
 	committed := false
+	readCtx, cancelRead := context.WithCancel(ctx)
+	defer cancelRead()
+	events := readStreamEvents(readCtx, reader)
 	for {
-		event, err := protocol.ReadSSEEvent(reader)
+		var event protocol.SSEEvent
+		var err error
+		select {
+		case result, ok := <-events:
+			if !ok {
+				return "cancelled", ctx.Err().Error(), committed
+			}
+			event, err = result.event, result.err
+		case <-stream.Heartbeat():
+			if writeErr := stream.WriteHeartbeat(w); writeErr != nil {
+				return "cancelled", writeErr.Error(), committed
+			}
+		case <-ctx.Done():
+			return "cancelled", ctx.Err().Error(), committed
+		}
 		if len(event.Raw) > 0 {
 			upstreamLog.Write(event.Raw)
 			chunks, semantic, done, convertErr := converter.Convert(event)
@@ -597,19 +655,15 @@ func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bu
 				*firstContent = &value
 			}
 			for _, chunk := range chunks {
-				if !committed {
+				if !stream.Committed() {
 					copyResponseHeaders(w.Header(), responseHeaders)
 					w.Header().Del("Content-Length")
 					w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
-					w.WriteHeader(responseStatus)
-					committed = true
+					stream.Commit(w, responseStatus)
 				}
-				clientLog.Write(chunk)
-				if _, writeErr := w.Write(chunk); writeErr != nil {
+				committed = true
+				if writeErr := stream.Write(w, chunk); writeErr != nil {
 					return "cancelled", writeErr.Error(), committed
-				}
-				if flusher != nil {
-					flusher.Flush()
 				}
 			}
 			if done {
