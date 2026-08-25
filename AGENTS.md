@@ -13,7 +13,10 @@
 
 - `cmd/model-confluence`：程序入口和优雅退出。
 - `internal/admin`：管理 API、管理员会话、CSRF 和登录限速。
+- `internal/app`：HTTP 装配，注册 healthz、admin、gateway、webui 路由并套安全头和请求日志中间件。
+- `internal/config`：CLI 参数与环境变量解析、子命令识别和校验。
 - `internal/gateway`：入站鉴权、路由、上游请求、重试冷却、流式代理和日志收尾。
+- `internal/httpx`：JSON 读写工具与基于可信代理的客户端 IP 解析。
 - `internal/protocol`：Chat Completions、Responses、Messages 的规范模型和双向转换。
 - `internal/store`：SQLite schema、兼容迁移、配置、路由解析、请求日志、用量统计和上游健康查询。
 - `internal/webui`：通过 `embed` 托管 `dist`。
