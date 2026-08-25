@@ -7,11 +7,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -92,6 +94,117 @@ func (h *Handler) TestModel(ctx context.Context, model, prompt string) (int, []b
 	recorder := httptest.NewRecorder()
 	h.generateAuthorized(recorder, request, protocolChat, nil, "管理后台测试")
 	return recorder.Code, recorder.Body.Bytes(), recorder.Header().Get("X-Request-ID")
+}
+
+var (
+	// ErrProviderNoEndpoint 表示供应商没有配置任何协议端点，无法推导模型列表地址。
+	ErrProviderNoEndpoint = errors.New("供应商尚未配置协议端点")
+	// ErrProviderNoKey 表示供应商没有可用的上游密钥。
+	ErrProviderNoKey = errors.New("供应商没有可用的上游密钥")
+
+	errUpstreamUnauthorized = errors.New("上游密钥未通过鉴权")
+)
+
+const maxModelsBodyBytes = 8 << 20
+
+var modelsEndpointSuffixes = []string{"/chat/completions", "/responses", "/messages"}
+
+// ListProviderModels 从供应商的模型列表端点拉取真实模型名，供管理后台选择。
+// 端点地址由生成端点 URL 去掉 /chat/completions、/responses 或 /messages 后缀再拼接 /models 推导而来。
+func (h *Handler) ListProviderModels(ctx context.Context, providerID int64) ([]string, error) {
+	provider, err := h.store.ProviderByID(providerID)
+	if err != nil {
+		return nil, err
+	}
+	endpoint, fromMessages := providerModelsEndpoint(provider)
+	if endpoint == "" {
+		return nil, ErrProviderNoEndpoint
+	}
+	var lastErr error
+	for _, key := range provider.Keys {
+		if !store.KeyAvailable(key) {
+			continue
+		}
+		models, err := h.fetchProviderModels(ctx, endpoint, fromMessages, provider, key)
+		if err == nil {
+			return models, nil
+		}
+		if !errors.Is(err, errUpstreamUnauthorized) {
+			return nil, err
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, ErrProviderNoKey
+}
+
+func providerModelsEndpoint(provider store.Provider) (endpoint string, fromMessages bool) {
+	for _, name := range []string{protocolChat, protocolResponses, protocolMessages} {
+		endpoint := provider.Endpoints[name]
+		if endpoint == "" {
+			continue
+		}
+		for _, suffix := range modelsEndpointSuffixes {
+			endpoint = strings.TrimSuffix(endpoint, suffix)
+		}
+		return endpoint + "/models", name == protocolMessages
+	}
+	return "", false
+}
+
+func (h *Handler) fetchProviderModels(ctx context.Context, endpoint string, fromMessages bool, provider store.Provider, key store.UpstreamKey) ([]string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	if fromMessages {
+		// Anthropic 风格端点默认每页 20 条，需要显式放大分页。
+		query := request.URL.Query()
+		query.Set("limit", "1000")
+		request.URL.RawQuery = query.Encode()
+	}
+	applyProviderHeaders(request.Header, provider, key.Secret)
+	response, err := h.client.Do(request)
+	if err != nil {
+		return nil, fmt.Errorf("请求上游失败: %w", err)
+	}
+	defer response.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxModelsBodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("读取上游响应失败: %w", err)
+	}
+	if response.StatusCode == http.StatusUnauthorized || response.StatusCode == http.StatusForbidden {
+		return nil, fmt.Errorf("%w（HTTP %d）", errUpstreamUnauthorized, response.StatusCode)
+	}
+	if response.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("上游返回 HTTP %d: %s", response.StatusCode, errorBodySnippet(body))
+	}
+	var payload struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return nil, fmt.Errorf("模型列表响应不是有效 JSON: %w", err)
+	}
+	models := make([]string, 0, len(payload.Data))
+	for _, item := range payload.Data {
+		if item.ID != "" {
+			models = append(models, item.ID)
+		}
+	}
+	sort.Strings(models)
+	return models, nil
+}
+
+func errorBodySnippet(body []byte) string {
+	snippet := strings.TrimSpace(string(body))
+	if len(snippet) > 200 {
+		snippet = snippet[:200] + "…"
+	}
+	return snippet
 }
 
 func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inboundProtocol string, accessKeyID *int64, accessKeyName string) {

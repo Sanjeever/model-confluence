@@ -36,7 +36,7 @@ func (s *Store) ResolveRoutes(requirements RoutingRequirements) ([]ResolvedRoute
 	}
 	routes := make([]ResolvedRoute, 0, len(templates))
 	for _, route := range templates {
-		if keyAvailable(route.Key) {
+		if KeyAvailable(route.Key) {
 			routes = append(routes, route)
 		}
 	}
@@ -140,6 +140,11 @@ func chooseProtocol(protocols []CandidateProtocol, requirements RoutingRequireme
 	return CandidateProtocol{}, false
 }
 
+// ProviderByID 返回供应商完整配置，包含密钥明文，供网关侧管理探测使用。
+func (s *Store) ProviderByID(id int64) (Provider, error) {
+	return s.providerByID(id, true)
+}
+
 func (s *Store) providerByID(id int64, includeSecrets bool) (Provider, error) {
 	var provider Provider
 	var staticHeadersJSON, quotaCodesJSON, createdAt string
@@ -165,7 +170,8 @@ func (s *Store) providerByID(id int64, includeSecrets bool) (Provider, error) {
 	return provider, err
 }
 
-func keyAvailable(key UpstreamKey) bool {
+// KeyAvailable 判断上游密钥当前是否可用于路由。
+func KeyAvailable(key UpstreamKey) bool {
 	if !key.Enabled || key.RuntimeStatus == "auth_invalid" || key.RuntimeStatus == "quota_exhausted" {
 		return false
 	}

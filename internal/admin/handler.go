@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sanjeever/model-confluence/internal/gateway"
 	"github.com/Sanjeever/model-confluence/internal/httpx"
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 	"github.com/Sanjeever/model-confluence/internal/store"
@@ -25,14 +26,15 @@ type Handler struct {
 	store    *store.Store
 	clientIP *httpx.ClientIPResolver
 	limiter  *loginLimiter
-	tester   modelTester
+	tester   upstreamTester
 }
 
-type modelTester interface {
+type upstreamTester interface {
 	TestModel(context.Context, string, string) (int, []byte, string)
+	ListProviderModels(context.Context, int64) ([]string, error)
 }
 
-func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver, tester modelTester) *Handler {
+func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver, tester upstreamTester) *Handler {
 	return &Handler{store: store, clientIP: clientIP, limiter: newLoginLimiter(), tester: tester}
 }
 
@@ -55,6 +57,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("DELETE /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteAccessKey))))
 	mux.Handle("GET /api/admin/providers", h.requireSession(http.HandlerFunc(h.listProviders)))
 	mux.Handle("GET /api/admin/provider-options", h.requireSession(http.HandlerFunc(h.listProviderOptions)))
+	mux.Handle("GET /api/admin/providers/{id}/models", h.requireSession(http.HandlerFunc(h.providerModels)))
 	mux.Handle("POST /api/admin/providers", h.requireSession(h.requireCSRF(http.HandlerFunc(h.createProvider))))
 	mux.Handle("PATCH /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.updateProvider))))
 	mux.Handle("PUT /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editProvider))))
@@ -404,6 +407,27 @@ func (h *Handler) listProviderOptions(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, providers)
+}
+
+func (h *Handler) providerModels(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的供应商 ID"})
+		return
+	}
+	models, err := h.tester.ListProviderModels(r.Context(), id)
+	if err != nil {
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "供应商不存在"})
+		case errors.Is(err, gateway.ErrProviderNoEndpoint), errors.Is(err, gateway.ErrProviderNoKey):
+			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
+		default:
+			httpx.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
+		}
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, map[string]any{"models": models})
 }
 
 func (h *Handler) createProvider(w http.ResponseWriter, r *http.Request) {
