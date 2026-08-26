@@ -73,6 +73,12 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     responses: 'https://api.teamorouter.com/v1/responses',
     messages: 'https://api.teamorouter.com/v1/messages',
   },
+  {
+    name: 'NVIDIA NIM',
+    chat_completions: 'https://integrate.api.nvidia.com/v1/chat/completions',
+    responses: 'https://integrate.api.nvidia.com/v1/responses',
+    messages: 'https://integrate.api.nvidia.com/v1/messages',
+  },
 ]
 
 export default function ProvidersPage() {
