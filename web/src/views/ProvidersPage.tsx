@@ -79,6 +79,12 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     responses: 'https://integrate.api.nvidia.com/v1/responses',
     messages: 'https://integrate.api.nvidia.com/v1/messages',
   },
+  {
+    name: 'EveryAPI',
+    chat_completions: 'https://api.everyapi.ai/v1/chat/completions',
+    responses: 'https://api.everyapi.ai/v1/responses',
+    messages: 'https://api.everyapi.ai/v1/messages',
+  },
 ]
 
 export default function ProvidersPage() {
