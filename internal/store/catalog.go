@@ -586,6 +586,7 @@ type ModelCandidate struct {
 	MaxOutputTokens        int                 `json:"max_output_tokens"`
 	RuntimeStatus          string              `json:"runtime_status"`
 	Protocols              []CandidateProtocol `json:"protocols"`
+	ConfigRevision         int64               `json:"-"`
 }
 
 type CandidateProtocol struct {
@@ -705,7 +706,7 @@ func (s *Store) hydrateVirtualModels(models []VirtualModel) error {
 		modelsByID[models[index].ID] = index
 	}
 	placeholders, args := idQuery(modelIDs)
-	rows, err := s.db.Query(`SELECT c.virtual_model_id, c.id, c.provider_id, p.name, c.upstream_model, c.position, c.enabled, c.default_max_output_tokens, c.max_output_tokens, c.runtime_status FROM model_candidates c JOIN providers p ON p.id = c.provider_id WHERE c.virtual_model_id IN (`+placeholders+`) AND c.archived_at IS NULL ORDER BY c.virtual_model_id, c.position`, args...)
+	rows, err := s.db.Query(`SELECT c.virtual_model_id, c.id, c.provider_id, p.name, c.upstream_model, c.position, c.enabled, c.default_max_output_tokens, c.max_output_tokens, c.runtime_status, c.config_revision FROM model_candidates c JOIN providers p ON p.id = c.provider_id WHERE c.virtual_model_id IN (`+placeholders+`) AND c.archived_at IS NULL ORDER BY c.virtual_model_id, c.position`, args...)
 	if err != nil {
 		return err
 	}
@@ -715,7 +716,7 @@ func (s *Store) hydrateVirtualModels(models []VirtualModel) error {
 	for rows.Next() {
 		var modelID int64
 		var candidate ModelCandidate
-		if err := rows.Scan(&modelID, &candidate.ID, &candidate.ProviderID, &candidate.ProviderName, &candidate.UpstreamModel, &candidate.Position, &candidate.Enabled, &candidate.DefaultMaxOutputTokens, &candidate.MaxOutputTokens, &candidate.RuntimeStatus); err != nil {
+		if err := rows.Scan(&modelID, &candidate.ID, &candidate.ProviderID, &candidate.ProviderName, &candidate.UpstreamModel, &candidate.Position, &candidate.Enabled, &candidate.DefaultMaxOutputTokens, &candidate.MaxOutputTokens, &candidate.RuntimeStatus, &candidate.ConfigRevision); err != nil {
 			rows.Close()
 			return err
 		}
@@ -863,7 +864,7 @@ func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) erro
 			if _, ok := existing[candidateID]; !ok {
 				return sql.ErrNoRows
 			}
-			if _, err := tx.Exec(`UPDATE model_candidates SET provider_id = ?, upstream_model = ?, position = ?, default_max_output_tokens = ?, max_output_tokens = ?, runtime_status = 'available', runtime_reason = NULL, updated_at = ? WHERE id = ?`, candidate.ProviderID, candidate.UpstreamModel, position, candidate.DefaultMaxOutputTokens, candidate.MaxOutputTokens, now, candidateID); err != nil {
+			if _, err := tx.Exec(`UPDATE model_candidates SET provider_id = ?, upstream_model = ?, position = ?, default_max_output_tokens = ?, max_output_tokens = ?, config_revision = config_revision + 1, runtime_status = 'available', runtime_reason = NULL, updated_at = ? WHERE id = ?`, candidate.ProviderID, candidate.UpstreamModel, position, candidate.DefaultMaxOutputTokens, candidate.MaxOutputTokens, now, candidateID); err != nil {
 				return err
 			}
 			delete(existing, candidateID)

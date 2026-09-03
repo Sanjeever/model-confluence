@@ -91,6 +91,7 @@ CREATE TABLE IF NOT EXISTS model_candidates (
     enabled INTEGER NOT NULL DEFAULT 1,
     default_max_output_tokens INTEGER NOT NULL,
     max_output_tokens INTEGER NOT NULL,
+    config_revision INTEGER NOT NULL DEFAULT 1,
     runtime_status TEXT NOT NULL DEFAULT 'available',
     runtime_reason TEXT,
     created_at TEXT NOT NULL,

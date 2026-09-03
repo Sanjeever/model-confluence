@@ -36,6 +36,7 @@ type Handler struct {
 }
 
 type candidateFailure struct {
+	revision      int64
 	count         int
 	cooldownUntil time.Time
 	probing       bool
@@ -268,7 +269,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	}
 	for index := 0; index < len(routes); index++ {
 		route := routes[index]
-		if (index == 0 || routes[index-1].CandidateID != route.CandidateID) && !h.candidateReady(route.CandidateID) {
+		if (index == 0 || routes[index-1].CandidateID != route.CandidateID) && !h.candidateReady(route.CandidateID, route.CandidateRevision) {
 			index = skipCandidate(routes, index, route.CandidateID)
 			continue
 		}
@@ -325,7 +326,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				return
 			}
 			h.completeAttemptFailure(attemptID, attemptStarted, err)
-			h.candidateFailed(route.CandidateID)
+			h.candidateFailed(route.CandidateID, route.CandidateRevision)
 			index = skipCandidate(routes, index, route.CandidateID)
 			if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 				return
@@ -346,8 +347,8 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "failed", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: string(responseBody), CompletedAt: time.Now().UTC()})
 			code := extractErrorCode(responseBody)
 			if code == "model_not_found" || code == "model_not_supported" {
-				_ = h.store.MarkModelCandidate(route.CandidateID, "config_error", code)
-				h.candidateSucceeded(route.CandidateID)
+				_ = h.store.MarkModelCandidate(route.CandidateID, route.CandidateRevision, "config_error", code)
+				h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
 				index = skipCandidate(routes, index, route.CandidateID)
 				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 					return
@@ -355,7 +356,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				continue
 			}
 			if shouldTryNextKey(response.StatusCode) {
-				h.candidateSucceeded(route.CandidateID)
+				h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
 				h.updateKeyAfterError(route, response.StatusCode, responseBody, response.Header)
 				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 					return
@@ -363,14 +364,14 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				continue
 			}
 			if response.StatusCode >= 500 {
-				h.candidateFailed(route.CandidateID)
+				h.candidateFailed(route.CandidateID, route.CandidateRevision)
 				index = skipCandidate(routes, index, route.CandidateID)
 				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 					return
 				}
 				continue
 			}
-			h.candidateSucceeded(route.CandidateID)
+			h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
 			finishError(response.StatusCode, "upstream_error", string(responseBody))
 			return
 		}
@@ -382,7 +383,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			err = h.proxyBuffered(w, response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
 		}
 		if err == nil {
-			h.candidateSucceeded(route.CandidateID)
+			h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
 			return
 		}
 		invalidResponseErr = err
@@ -427,11 +428,15 @@ func retryBackoff(retryIndex int) time.Duration {
 	return floor + time.Duration(rand.Int64N(int64(limit-floor)+1))
 }
 
-func (h *Handler) candidateReady(candidateID int64) bool {
+func (h *Handler) candidateReady(candidateID, revision int64) bool {
 	h.candidateMu.Lock()
 	defer h.candidateMu.Unlock()
 	state, ok := h.candidates[candidateID]
-	if !ok || state.cooldownUntil.IsZero() {
+	if !ok || state.revision < revision {
+		delete(h.candidates, candidateID)
+		return true
+	}
+	if state.revision > revision || state.cooldownUntil.IsZero() {
 		return true
 	}
 	if time.Now().Before(state.cooldownUntil) || state.probing {
@@ -442,13 +447,19 @@ func (h *Handler) candidateReady(candidateID int64) bool {
 	return true
 }
 
-func (h *Handler) candidateFailed(candidateID int64) {
+func (h *Handler) candidateFailed(candidateID, revision int64) {
 	h.candidateMu.Lock()
 	defer h.candidateMu.Unlock()
 	if h.candidates == nil {
 		h.candidates = make(map[int64]candidateFailure)
 	}
 	state := h.candidates[candidateID]
+	if state.revision > revision {
+		return
+	}
+	if state.revision < revision {
+		state = candidateFailure{revision: revision}
+	}
 	state.count++
 	if state.count >= 3 {
 		state.cooldownUntil = time.Now().Add(30 * time.Second)
@@ -457,9 +468,11 @@ func (h *Handler) candidateFailed(candidateID int64) {
 	h.candidates[candidateID] = state
 }
 
-func (h *Handler) candidateSucceeded(candidateID int64) {
+func (h *Handler) candidateSucceeded(candidateID, revision int64) {
 	h.candidateMu.Lock()
-	delete(h.candidates, candidateID)
+	if h.candidates[candidateID].revision == revision {
+		delete(h.candidates, candidateID)
+	}
 	h.candidateMu.Unlock()
 }
 

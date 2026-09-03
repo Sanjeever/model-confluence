@@ -113,6 +113,9 @@ func (s *Store) migrate() error {
 	if err := ensureLogPayloadColumns(tx); err != nil {
 		return fmt.Errorf("migrate log payload columns: %w", err)
 	}
+	if err := ensureColumn(tx, "model_candidates", "config_revision", "INTEGER NOT NULL DEFAULT 1"); err != nil {
+		return fmt.Errorf("migrate candidate config revision: %w", err)
+	}
 	return tx.Commit()
 }
 

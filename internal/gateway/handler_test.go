@@ -155,10 +155,10 @@ func TestRetryBackoffStaysWithinExponentialCap(t *testing.T) {
 
 func TestCandidateCooldownAllowsSingleProbe(t *testing.T) {
 	h := &Handler{candidates: make(map[int64]candidateFailure)}
-	h.candidateFailed(7)
-	h.candidateFailed(7)
-	h.candidateFailed(7)
-	if h.candidateReady(7) {
+	h.candidateFailed(7, 1)
+	h.candidateFailed(7, 1)
+	h.candidateFailed(7, 1)
+	if h.candidateReady(7, 1) {
 		t.Fatal("candidate should be cooling down")
 	}
 	h.candidateMu.Lock()
@@ -166,15 +166,33 @@ func TestCandidateCooldownAllowsSingleProbe(t *testing.T) {
 	state.cooldownUntil = time.Now().Add(-time.Second)
 	h.candidates[7] = state
 	h.candidateMu.Unlock()
-	if !h.candidateReady(7) {
+	if !h.candidateReady(7, 1) {
 		t.Fatal("candidate should allow a probe after cooldown")
 	}
-	if h.candidateReady(7) {
+	if h.candidateReady(7, 1) {
 		t.Fatal("candidate should allow only one concurrent probe")
 	}
-	h.candidateSucceeded(7)
-	if !h.candidateReady(7) {
+	h.candidateSucceeded(7, 1)
+	if !h.candidateReady(7, 1) {
 		t.Fatal("successful probe should reset candidate state")
+	}
+}
+
+func TestCandidateCooldownDoesNotCarryAcrossRevision(t *testing.T) {
+	h := &Handler{candidates: make(map[int64]candidateFailure)}
+	h.candidateFailed(7, 1)
+	h.candidateFailed(7, 1)
+	h.candidateFailed(7, 1)
+	if !h.candidateReady(7, 2) {
+		t.Fatal("updated candidate inherited the previous revision cooldown")
+	}
+
+	h.candidateFailed(7, 2)
+	h.candidateFailed(7, 2)
+	h.candidateFailed(7, 2)
+	h.candidateSucceeded(7, 1)
+	if h.candidateReady(7, 2) {
+		t.Fatal("stale candidate success cleared the current revision cooldown")
 	}
 }
 

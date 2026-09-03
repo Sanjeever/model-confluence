@@ -20,6 +20,7 @@ type RoutingRequirements struct {
 type ResolvedRoute struct {
 	VirtualModel           string
 	CandidateID            int64
+	CandidateRevision      int64
 	UpstreamModel          string
 	DefaultMaxOutputTokens int
 	UpstreamProtocol       string
@@ -110,7 +111,7 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 		}
 		for _, key := range provider.Keys {
 			routes = append(routes, ResolvedRoute{
-				VirtualModel: requirements.VirtualModel, CandidateID: candidate.ID, UpstreamModel: candidate.UpstreamModel, DefaultMaxOutputTokens: candidate.DefaultMaxOutputTokens,
+				VirtualModel: requirements.VirtualModel, CandidateID: candidate.ID, CandidateRevision: candidate.ConfigRevision, UpstreamModel: candidate.UpstreamModel, DefaultMaxOutputTokens: candidate.DefaultMaxOutputTokens,
 				UpstreamProtocol: protocol.Protocol, UpstreamEndpoint: endpoint, Provider: provider, Key: key, ProtocolConfig: protocol,
 			})
 		}
@@ -196,12 +197,19 @@ func (s *Store) MarkUpstreamKey(id int64, status, reason string, recoverAt *time
 	return err
 }
 
-func (s *Store) MarkModelCandidate(id int64, status, reason string) error {
-	_, err := s.db.Exec(`UPDATE model_candidates SET runtime_status = ?, runtime_reason = ?, updated_at = ? WHERE id = ?`, status, nullableString(reason), formatTime(time.Now()), id)
-	if err == nil {
+func (s *Store) MarkModelCandidate(id, revision int64, status, reason string) error {
+	result, err := s.db.Exec(`UPDATE model_candidates SET runtime_status = ?, runtime_reason = ?, updated_at = ? WHERE id = ? AND config_revision = ?`, status, nullableString(reason), formatTime(time.Now()), id, revision)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows > 0 {
 		s.invalidateConfig()
 	}
-	return err
+	return nil
 }
 
 func (s *Store) TouchUpstreamKey(id int64) error {
