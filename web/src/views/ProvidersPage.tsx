@@ -56,7 +56,13 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     messages: '',
   },
   {
-    name: 'SiliconFlow',
+    name: 'SiliconFlow 国际站',
+    chat_completions: 'https://api.siliconflow.com/v1/chat/completions',
+    responses: '',
+    messages: 'https://api.siliconflow.com/v1/messages',
+  },
+  {
+    name: 'SiliconFlow 国内站',
     chat_completions: 'https://api.siliconflow.cn/v1/chat/completions',
     responses: '',
     messages: 'https://api.siliconflow.cn/v1/messages',
@@ -68,10 +74,16 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     messages: 'https://note3-prev-api.askdiandian.com/v1/messages',
   },
   {
-    name: 'TeamoRouter',
+    name: 'TeamoRouter 国际站',
     chat_completions: 'https://api.teamorouter.com/v1/chat/completions',
     responses: 'https://api.teamorouter.com/v1/responses',
     messages: 'https://api.teamorouter.com/v1/messages',
+  },
+  {
+    name: 'TeamoRouter 国内站',
+    chat_completions: 'https://api.teamorouter.cn/v1/chat/completions',
+    responses: 'https://api.teamorouter.cn/v1/responses',
+    messages: 'https://api.teamorouter.cn/v1/messages',
   },
   {
     name: 'NVIDIA NIM',
