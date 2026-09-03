@@ -755,7 +755,10 @@ func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, bod
 		return
 	}
 	if status == http.StatusPaymentRequired {
-		h.store.MarkUpstreamKey(route.Key.ID, "quota_exhausted", extractErrorCode(body), nil)
+		code := extractErrorCode(body)
+		if contains(route.Provider.QuotaCodes, code) {
+			h.store.MarkUpstreamKey(route.Key.ID, "quota_exhausted", code, nil)
+		}
 		return
 	}
 	if status != http.StatusTooManyRequests {

@@ -209,7 +209,7 @@ func TestParseRetryAfterSupportsSecondsAndHTTPDate(t *testing.T) {
 	}
 }
 
-func TestUpdateKeyAfterPaymentRequiredMarksQuota(t *testing.T) {
+func TestUpdateKeyAfterPaymentRequiredRequiresConfiguredQuotaCode(t *testing.T) {
 	database, err := store.Open(filepath.Join(t.TempDir(), "model-confluence.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -217,10 +217,11 @@ func TestUpdateKeyAfterPaymentRequiredMarksQuota(t *testing.T) {
 	defer database.Close()
 
 	_, err = database.CreateProvider(store.CreateProviderInput{
-		Name:      "DeepSeek",
-		AuthType:  "bearer",
-		Endpoints: map[string]string{protocol.Chat: "https://example.test/chat/completions"},
-		Keys:      []store.CreateUpstreamKeyInput{{Name: "primary", Secret: "test-secret"}},
+		Name:       "DeepSeek",
+		AuthType:   "bearer",
+		Endpoints:  map[string]string{protocol.Chat: "https://example.test/chat/completions"},
+		QuotaCodes: []string{"insufficient_quota"},
+		Keys:       []store.CreateUpstreamKeyInput{{Name: "primary", Secret: "test-secret"}},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -238,10 +239,20 @@ func TestUpdateKeyAfterPaymentRequiredMarksQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	key := providers[0].Keys[0]
+	if key.RuntimeStatus != "available" {
+		t.Fatalf("unconfigured 402 code changed key status: %q", key.RuntimeStatus)
+	}
+
+	h.updateKeyAfterError(route, http.StatusPaymentRequired, []byte(`{"error":{"type":"billing_error","code":"insufficient_quota"}}`), nil)
+	providers, err = database.ListProviders()
+	if err != nil {
+		t.Fatal(err)
+	}
+	key = providers[0].Keys[0]
 	if key.RuntimeStatus != "quota_exhausted" {
 		t.Fatalf("unexpected key status: %q", key.RuntimeStatus)
 	}
-	if key.RuntimeReason != "invalid_request_error" {
+	if key.RuntimeReason != "insufficient_quota" {
 		t.Fatalf("unexpected key reason: %q", key.RuntimeReason)
 	}
 }
