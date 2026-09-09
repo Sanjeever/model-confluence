@@ -3,6 +3,7 @@ package store
 import (
 	"encoding/json"
 	"errors"
+	"sort"
 	"time"
 )
 
@@ -109,6 +110,7 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 		if endpoint == "" {
 			continue
 		}
+		sortKeysByUsage(provider.Keys)
 		for _, key := range provider.Keys {
 			routes = append(routes, ResolvedRoute{
 				VirtualModel: requirements.VirtualModel, CandidateID: candidate.ID, CandidateRevision: candidate.ConfigRevision, UpstreamModel: candidate.UpstreamModel, DefaultMaxOutputTokens: candidate.DefaultMaxOutputTokens,
@@ -216,6 +218,9 @@ func (s *Store) TouchUpstreamKey(id int64) error {
 	now := time.Now().UTC()
 	return s.touchConfig("upstream_key", id, now, func() error {
 		_, err := s.db.Exec(`UPDATE upstream_keys SET last_used_at = ? WHERE id = ?`, formatTime(now), id)
+		if err == nil {
+			s.invalidateRoutes()
+		}
 		return err
 	})
 }
@@ -266,6 +271,18 @@ func (s *Store) loadEnabledModelNames() ([]string, error) {
 		names = append(names, name)
 	}
 	return names, rows.Err()
+}
+
+// sortKeysByUsage 将同一候选内的密钥按最近使用时间轮询排序：
+// 最久未使用（含从未使用）的密钥排前，时间相同则保持原有 position 顺序。
+func sortKeysByUsage(keys []UpstreamKey) {
+	sort.SliceStable(keys, func(i, j int) bool {
+		a, b := keys[i].LastUsedAt, keys[j].LastUsedAt
+		if a == nil {
+			return b != nil
+		}
+		return b != nil && a.Before(*b)
+	})
 }
 
 func contains(values []string, target string) bool {

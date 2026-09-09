@@ -68,6 +68,15 @@ func (s *Store) invalidateConfig() {
 	s.touchMu.Unlock()
 }
 
+// invalidateRoutes 在密钥最近使用时间变化后仅失效路由模板缓存，
+// 使下一次解析按最新 last_used_at 重新排序；不动 access key 缓存与 touch 节流。
+func (s *Store) invalidateRoutes() {
+	s.configMu.Lock()
+	s.configVersion++
+	s.routeCache = make(map[RoutingRequirements][]ResolvedRoute)
+	s.configMu.Unlock()
+}
+
 func (s *Store) touchConfig(kind string, id int64, now time.Time, update func() error) error {
 	key := configTouchKey{kind: kind, id: id}
 	s.touchMu.Lock()
