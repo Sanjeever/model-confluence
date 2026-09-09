@@ -130,6 +130,13 @@ export type Provider = {
 
 export type ProviderOption = Pick<Provider, 'id' | 'name' | 'enabled' | 'endpoints'>
 
+export type AccessKeyOption = {
+  id: number
+  name: string
+  enabled: boolean
+  archived: boolean
+}
+
 export type CandidateProtocol = {
   protocol: 'chat_completions' | 'responses' | 'messages'
   position: number

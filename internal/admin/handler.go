@@ -51,6 +51,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))
 	mux.Handle("GET /api/admin/requests/{id}", h.requireSession(http.HandlerFunc(h.requestDetail)))
 	mux.Handle("GET /api/admin/access-keys", h.requireSession(http.HandlerFunc(h.listAccessKeys)))
+	mux.Handle("GET /api/admin/access-key-options", h.requireSession(http.HandlerFunc(h.listAccessKeyOptions)))
 	mux.Handle("POST /api/admin/access-keys", h.requireSession(h.requireCSRF(http.HandlerFunc(h.createAccessKey))))
 	mux.Handle("PATCH /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.updateAccessKey))))
 	mux.Handle("PUT /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editAccessKey))))
@@ -213,7 +214,11 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	requests, err := h.store.ListRequests(page, pageSize, strings.TrimSpace(r.URL.Query().Get("request_id")), createdFrom, createdTo)
+	accessKeyID, ok := optionalIDQuery(w, r, "access_key_id")
+	if !ok {
+		return
+	}
+	requests, err := h.store.ListRequests(page, pageSize, strings.TrimSpace(r.URL.Query().Get("request_id")), accessKeyID, createdFrom, createdTo)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -288,6 +293,15 @@ func (h *Handler) listAccessKeys(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, keys)
+}
+
+func (h *Handler) listAccessKeyOptions(w http.ResponseWriter, _ *http.Request) {
+	options, err := h.store.ListAccessKeyOptions()
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, options)
 }
 
 func (h *Handler) createAccessKey(w http.ResponseWriter, r *http.Request) {
@@ -736,6 +750,19 @@ func enabledQuery(w http.ResponseWriter, r *http.Request) (*bool, bool) {
 		return nil, false
 	}
 	return &enabled, true
+}
+
+func optionalIDQuery(w http.ResponseWriter, r *http.Request, name string) (*int64, bool) {
+	raw := strings.TrimSpace(r.URL.Query().Get(name))
+	if raw == "" {
+		return nil, true
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || id <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": name + " 参数无效"})
+		return nil, false
+	}
+	return &id, true
 }
 
 func requestTimeRange(r *http.Request) (time.Time, time.Time, error) {

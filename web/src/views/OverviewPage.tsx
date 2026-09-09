@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom'
-import { Button, Card, Col, DatePicker, Empty, Input, Row, Space, Table, Tag, Typography } from 'antd'
+import { Button, Card, Col, DatePicker, Empty, Input, Row, Select, Space, Table, Tag, Typography } from 'antd'
 import { EyeOutlined, ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
 import dayjs, { type Dayjs } from 'dayjs'
-import { api, type Overview, type RequestDetail, type RequestPage } from '../api'
+import { api, type AccessKeyOption, type Overview, type RequestDetail, type RequestPage } from '../api'
 import RequestDrawer, { protocolName, statusName } from '../components/RequestDrawer'
 import MetricCard from '../components/MetricCard'
 import { formatCount } from '../format'
@@ -27,6 +27,7 @@ export default function OverviewPage() {
   })
   const [requestIDInput, setRequestIDInput] = useState(() => searchParams.get('request_id') ?? '')
   const [requestID, setRequestID] = useState(() => searchParams.get('request_id') ?? '')
+  const [accessKeyID, setAccessKeyID] = useState(() => searchParams.get('access_key_id') ?? '')
   const { detailID } = useParams<{ detailID: string }>()
   const location = useLocation()
   const navigate = useNavigate()
@@ -43,14 +44,19 @@ export default function OverviewPage() {
       page_size: String(pageSize),
     })
     if (requestID) params.set('request_id', requestID)
+    if (accessKeyID) params.set('access_key_id', accessKeyID)
     setSearchParams(params, { replace: true })
-  }, [dateRange, page, pageSize, requestID, setSearchParams])
+  }, [dateRange, page, pageSize, requestID, accessKeyID, setSearchParams])
   const overview = useQuery({
     queryKey: ['overview'],
     queryFn: () => api<Overview>('/api/admin/overview'),
   })
+  const keyOptions = useQuery({
+    queryKey: ['access-key-options'],
+    queryFn: () => api<AccessKeyOption[]>('/api/admin/access-key-options'),
+  })
   const requests = useQuery({
-    queryKey: ['requests', page, pageSize, requestID, createdFrom, createdTo],
+    queryKey: ['requests', page, pageSize, requestID, accessKeyID, createdFrom, createdTo],
     queryFn: () => {
       const params = new URLSearchParams({
         page: String(page),
@@ -59,6 +65,7 @@ export default function OverviewPage() {
         created_from: createdFrom,
         created_to: createdTo,
       })
+      if (accessKeyID) params.set('access_key_id', accessKeyID)
       return api<RequestPage>(`/api/admin/requests?${params}`)
     },
     refetchInterval: shouldPoll ? 5000 : false,
@@ -90,6 +97,7 @@ export default function OverviewPage() {
         <Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">使用记录</Typography.Title>
         <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
           <DatePicker.RangePicker aria-label="请求时间范围" allowClear={false} format="YYYY-MM-DD" value={dateRange} onChange={(value) => { if (!value?.[0] || !value?.[1]) return; setDateRange([value[0], value[1]]); setPage(1) }} className="w-full sm:w-[260px]" />
+          <Select allowClear showSearch placeholder="密钥" aria-label="按访问密钥筛选" optionFilterProp="label" className="w-full sm:w-[200px]" value={accessKeyID ? Number(accessKeyID) : undefined} onChange={(value) => { setAccessKeyID(value ? String(value) : ''); setPage(1) }} options={keyOptions.data?.map((key) => ({ value: key.id, label: key.archived ? `${key.name}（已归档）` : key.name })) ?? []} />
           <Input.Search allowClear enterButton="搜索" placeholder="输入请求 ID" className="min-w-0 flex-1 lg:w-[360px]" value={requestIDInput} onChange={(event) => { const value = event.target.value; setRequestIDInput(value); if (!value) { setRequestID(''); setPage(1) } }} onSearch={(value) => { setRequestID(value.trim()); setPage(1) }} />
           <Button icon={<ReloadOutlined />} loading={requests.isFetching} onClick={refresh}><span className="hidden sm:inline">刷新</span></Button>
         </div>
@@ -110,7 +118,7 @@ export default function OverviewPage() {
           scroll={{ x: 1380, y: 'calc(100vh - 430px)' }}
           onRow={(record) => ({ onClick: () => openDetail(record.id), className: 'cursor-pointer' })}
           pagination={{ current: page, pageSize, total: requests.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }}
-          locale={{ emptyText: <Empty className="py-14" description={requestID ? '没有匹配该请求 ID 的记录' : '所选时间范围内暂无请求记录'} /> }}
+          locale={{ emptyText: <Empty className="py-14" description={requestID || accessKeyID ? '没有匹配筛选条件的记录' : '所选时间范围内暂无请求记录'} /> }}
           columns={[
             { title: '请求时间', dataIndex: 'created_at', width: 190, render: (value) => new Date(value).toLocaleString() },
             { title: '请求 ID', dataIndex: 'id', width: 180, render: (value) => <code>{value}</code> },

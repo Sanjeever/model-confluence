@@ -28,6 +28,30 @@ type AccessKeyPage struct {
 	PageSize int         `json:"page_size"`
 }
 
+type AccessKeyOption struct {
+	ID       int64  `json:"id"`
+	Name     string `json:"name"`
+	Enabled  bool   `json:"enabled"`
+	Archived bool   `json:"archived"`
+}
+
+func (s *Store) ListAccessKeyOptions() ([]AccessKeyOption, error) {
+	rows, err := s.db.Query(`SELECT id, name, enabled, archived_at IS NOT NULL FROM access_keys ORDER BY id DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	options := make([]AccessKeyOption, 0)
+	for rows.Next() {
+		var option AccessKeyOption
+		if err := rows.Scan(&option.ID, &option.Name, &option.Enabled, &option.Archived); err != nil {
+			return nil, err
+		}
+		options = append(options, option)
+	}
+	return options, rows.Err()
+}
+
 func (s *Store) ListAccessKeys() ([]AccessKey, error) {
 	rows, err := s.db.Query(`SELECT id, name, secret, enabled, expires_at, last_used_at, created_at FROM access_keys WHERE archived_at IS NULL ORDER BY id DESC`)
 	if err != nil {

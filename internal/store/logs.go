@@ -227,12 +227,16 @@ type AttemptDetail struct {
 	CompletedAt      *time.Time              `json:"completed_at"`
 }
 
-func (s *Store) ListRequests(page, pageSize int, requestID string, createdFrom, createdTo time.Time) (RequestPage, error) {
+func (s *Store) ListRequests(page, pageSize int, requestID string, accessKeyID *int64, createdFrom, createdTo time.Time) (RequestPage, error) {
 	where := "r.created_at >= ? AND r.created_at < ?"
 	args := []any{formatTime(createdFrom), formatTime(createdTo)}
 	if requestID != "" {
 		where += " AND instr(r.id, ?) > 0"
 		args = append(args, requestID)
+	}
+	if accessKeyID != nil {
+		where += " AND r.access_key_id = ?"
+		args = append(args, *accessKeyID)
 	}
 	var total int
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM requests r WHERE "+where, args...).Scan(&total); err != nil {
