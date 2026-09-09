@@ -36,14 +36,14 @@
 - 支持 Chat Completions、Responses、Messages 三种协议的九种入站/上游组合。
 - 支持流式 SSE、非流式文本、推理内容和客户端工具调用的协议转换。
 - 通过虚拟模型隐藏真实供应商模型名，并按候选与协议顺序路由。
-- 顺序管理供应商密钥池，在鉴权、限流、额度错误时切换同候选的下一把密钥，其他上游错误跳到下一候选。
+- 按最久未使用轮询供应商密钥池，在鉴权、限流、额度错误时切换同候选的下一把密钥，其他上游错误跳到下一候选。
 - 上游失败自动重试并带指数退避，连续失败的候选短暂冷却。
 - 完整记录入站请求、转换后的上游请求、上游响应、客户端响应和耗时。
 - 提供访问密钥、供应商、模型路由、使用记录、性能监控、用量统计和上游健康管理界面。
 - 模型路由支持在管理后台直接测试虚拟模型连通性，配置候选时可从供应商的模型列表端点拉取真实模型名；管理后台支持修改管理员密码和退出登录。
 - 使用记录支持请求 ID 搜索、服务端分页、筛选条件持久化到 URL、请求详情和凭据遮罩查看。
 - 性能监控展示成功率与延迟分位数，用量统计按模型聚合 Token 与缓存命中，上游健康展示密钥池状态与无可用路由模型。
-- 内置火山方舟、DeepSeek、百炼、OpenRouter、Groq、SiliconFlow、dots studio、TeamoRouter 等 9 个供应商模板。
+- 内置火山方舟、DeepSeek、百炼、OpenRouter、Groq、SiliconFlow、dots studio、TeamoRouter、NVIDIA NIM、EveryAPI 等 15 个供应商模板。
 - 使用 SQLite WAL 持久化配置与日志，不依赖外部数据库。
 
 协议转换只覆盖三种协议之间可明确对应的公共能力。跨协议请求支持 URL、data URL 和 base64 图片输入；音频、视频、文件输入、供应商私有字段、托管工具和服务端会话状态等能力不保证可以跨协议转换。`file_id` 图片输入不在跨协议支持范围内；同协议路由会尽量保持原始请求和响应。
@@ -277,7 +277,10 @@ go run ./cmd/model-confluence admin reset-password --data-dir ./data
 ```text
 cmd/model-confluence/   程序入口
 internal/admin/         管理 API、登录会话与 CSRF
+internal/app/           HTTP 装配、安全头与请求日志中间件
+internal/config/        CLI 参数与环境变量解析、子命令识别
 internal/gateway/       模型入口、路由执行与上游代理
+internal/httpx/         JSON 读写与可信代理客户端 IP 解析
 internal/protocol/      三协议请求、响应和 SSE 转换
 internal/store/         SQLite 模型、迁移、路由和日志
 internal/webui/         前端嵌入与构建产物
