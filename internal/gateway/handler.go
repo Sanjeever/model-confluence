@@ -833,6 +833,9 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 	if err := json.Unmarshal(body, &value); err != nil {
 		return nil, err
 	}
+	if value == nil {
+		return body, nil
+	}
 	encoded, _ := json.Marshal(model)
 	value["model"] = encoded
 	return json.Marshal(value)
