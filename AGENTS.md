@@ -86,6 +86,9 @@ pnpm build
 - Anthropic `signature`、`redacted_thinking` 等目标协议无法表达的字段不能伪造成 Chat 或 Responses 字段。
 - 路由由虚拟模型候选顺序决定；候选内部优先同协议，否则按协议入口顺序选择。
 - 模型候选只能引用供应商已配置的协议端点；删除端点或供应商前必须检查模型路由引用。
+- 火山方舟（2026-09 升级后）的 `cache_creation_input_tokens` 只存在于其 Messages 协议 usage 顶层（Anthropic 风格），Chat/Responses 不返回该字段。网关对 Messages 已映射到 `cache_write_tokens`；Chat/Responses 不采集属正确行为，勿再追加解析。
+- 火山方舟 Responses 当前默认返回明文 `reasoning`/`summary`，网关跨协议转换正常；网关不识别 `reasoning.encrypted_content`，若方舟未来某场景只返回加密、不再返回明文，跨协议思考内容会丢失——属已知潜在边界，不作为 bug 处理。
+- 火山方舟升级后，对非法 content、tool_call_id、无法解析的 encrypted_content/signature、非支持模态等输入由「报错」改为「静默兼容」。网关依赖上游报错暴露问题并触发故障切换的链路在这几类上变弱。
 
 ## 日志与敏感数据
 
