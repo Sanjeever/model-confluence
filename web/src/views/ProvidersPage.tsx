@@ -44,6 +44,18 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     messages: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
   },
   {
+    name: '百炼 Token Plan',
+    chat_completions: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
+    responses: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses',
+    messages: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
+  },
+  {
+    name: '百炼 Coding Plan',
+    chat_completions: 'https://coding.dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
+    responses: 'https://coding.dashscope.aliyuncs.com/compatible-mode/v1/responses',
+    messages: 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages',
+  },
+  {
     name: 'OpenRouter',
     chat_completions: 'https://openrouter.ai/api/v1/chat/completions',
     responses: 'https://openrouter.ai/api/v1/responses',
