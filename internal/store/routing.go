@@ -1,6 +1,7 @@
 package store
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"sort"
@@ -197,6 +198,23 @@ func (s *Store) MarkUpstreamKey(id int64, status, reason string, recoverAt *time
 		s.invalidateConfig()
 	}
 	return err
+}
+
+// ResetUpstreamKeyRuntime 清除上游密钥的运行状态，不改变管理员启用状态或密钥原文。
+func (s *Store) ResetUpstreamKeyRuntime(id int64) error {
+	result, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, updated_at = ? WHERE id = ? AND archived_at IS NULL`, formatTime(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	s.invalidateConfig()
+	return nil
 }
 
 func (s *Store) MarkModelCandidate(id, revision int64, status, reason string) error {

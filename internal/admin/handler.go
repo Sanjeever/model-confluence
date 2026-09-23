@@ -46,6 +46,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/admin/overview", h.requireSession(http.HandlerFunc(h.overview)))
 	mux.Handle("GET /api/admin/performance", h.requireSession(http.HandlerFunc(h.performance)))
 	mux.Handle("GET /api/admin/health", h.requireSession(http.HandlerFunc(h.health)))
+	mux.Handle("POST /api/admin/upstream-keys/{id}/reset-runtime", h.requireSession(h.requireCSRF(http.HandlerFunc(h.resetUpstreamKeyRuntime))))
 	mux.Handle("GET /api/admin/costs", h.requireSession(http.HandlerFunc(h.costs)))
 	mux.Handle("GET /api/admin/model-names", h.requireSession(http.HandlerFunc(h.modelNames)))
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))
@@ -175,6 +176,19 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, health)
+}
+
+func (h *Handler) resetUpstreamKeyRuntime(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil || id <= 0 {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的上游密钥 ID"})
+		return
+	}
+	if err := h.store.ResetUpstreamKeyRuntime(id); err != nil {
+		writeStoreError(w, err, "上游密钥不存在")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) costs(w http.ResponseWriter, r *http.Request) {

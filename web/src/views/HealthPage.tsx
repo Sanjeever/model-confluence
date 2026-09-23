@@ -1,5 +1,5 @@
-import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Col, Empty, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { Alert, App, Button, Card, Col, Empty, Popconfirm, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
 import { ReloadOutlined } from '@ant-design/icons'
 import { api, type CandidateHealth, type HealthOverview, type UpstreamKeyHealth } from '../api'
 import MetricCard from '../components/MetricCard'
@@ -13,10 +13,21 @@ const keyStatusMeta: Record<string, { label: string; color: string }> = {
 }
 
 export default function HealthPage() {
+  const { message } = App.useApp()
+  const queryClient = useQueryClient()
   const health = useQuery({
     queryKey: ['health'],
     queryFn: () => api<HealthOverview>('/api/admin/health'),
     refetchInterval: 10000,
+  })
+  const resetRuntime = useMutation({
+    mutationFn: (id: number) => api(`/api/admin/upstream-keys/${id}/reset-runtime`, { method: 'POST' }),
+    onSuccess: () => {
+      message.success('密钥运行状态已重置')
+      queryClient.invalidateQueries({ queryKey: ['health'] })
+      queryClient.invalidateQueries({ queryKey: ['providers'] })
+    },
+    onError: (error) => message.error(error.message),
   })
 
   return (
@@ -51,6 +62,7 @@ export default function HealthPage() {
             { title: '过期时间', dataIndex: 'expires_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
             { title: '最后使用', dataIndex: 'last_used_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
             { title: '备注', dataIndex: 'runtime_reason', ellipsis: true, render: (value) => value ? <code className="text-xs">{value}</code> : '—' },
+            { title: '操作', width: 110, align: 'right', render: (_, record) => record.enabled && record.runtime_status !== 'available' ? <Popconfirm title="立即恢复这把密钥？" description="请确认供应商侧已经恢复额度或服务。" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(record.id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> : '—' },
           ]}
         />
       </Card>
