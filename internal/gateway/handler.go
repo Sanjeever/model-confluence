@@ -112,7 +112,7 @@ const maxModelsBodyBytes = 8 << 20
 var modelsEndpointSuffixes = []string{"/chat/completions", "/responses", "/messages"}
 
 // ListProviderModels 从供应商的模型列表端点拉取真实模型名，供管理后台选择。
-// 端点地址由生成端点 URL 去掉 /chat/completions、/responses 或 /messages 后缀再拼接 /models 推导而来。
+// 地址从已配置的生成端点推导，要求上游提供兼容的模型列表 API。
 func (h *Handler) ListProviderModels(ctx context.Context, providerID int64) ([]string, error) {
 	provider, err := h.store.ProviderByID(providerID)
 	if err != nil {
@@ -162,7 +162,7 @@ func (h *Handler) fetchProviderModels(ctx context.Context, endpoint string, from
 		return nil, err
 	}
 	if fromMessages {
-		// Anthropic 风格端点默认每页 20 条，需要显式放大分页。
+		// 显式扩大请求页大小，减少默认分页只显示部分模型的情况。
 		query := request.URL.Query()
 		query.Set("limit", "1000")
 		request.URL.RawQuery = query.Encode()

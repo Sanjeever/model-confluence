@@ -68,8 +68,7 @@ func (s *Store) invalidateConfig() {
 	s.touchMu.Unlock()
 }
 
-// invalidateRoutes 在密钥最近使用时间变化后仅失效路由模板缓存，
-// 使下一次解析按最新 last_used_at 重新排序；不动 access key 缓存与 touch 节流。
+// 密钥使用时间只影响后续路由顺序，不应失效入站鉴权缓存或重置配置使用时间节流。
 func (s *Store) invalidateRoutes() {
 	s.configMu.Lock()
 	s.configVersion++

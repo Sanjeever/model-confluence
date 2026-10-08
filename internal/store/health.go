@@ -37,9 +37,8 @@ type HealthOverview struct {
 }
 
 // HealthStatus aggregates the runtime state of the upstream key pools and the
-// recent failure history of model candidates. Candidate cooldown is not
-// persisted by the gateway, so the candidate dimension reflects the latest
-// actual attempt outcome rather than a synthetic state.
+// recent failure history of model candidates. Failure history does not report
+// the gateway's in-memory candidate cooldown or prove current availability.
 func (s *Store) HealthStatus() (HealthOverview, error) {
 	var result HealthOverview
 	result.Keys = []UpstreamKeyHealth{}
@@ -110,9 +109,8 @@ ORDER BY last_failed_at DESC`)
 	}
 	result.FailedCandidates = len(result.Candidates)
 
-	// Unrouted models: enabled virtual models with no currently available
-	// candidate route (all candidates disabled, provider disabled, or key pool
-	// drained). This surfaces requests that would fail with no_eligible_route.
+	// Check configured route and key availability with no request capabilities.
+	// This cannot account for gateway cooldown or a specific request's needs.
 	routes, err := s.EnabledModelNames()
 	if err != nil {
 		return HealthOverview{}, err
