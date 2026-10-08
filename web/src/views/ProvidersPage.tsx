@@ -56,6 +56,18 @@ const providerTemplates: Array<{ name: string; chat_completions: string; respons
     messages: 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages',
   },
   {
+    name: '千问 AI 平台按量计费',
+    chat_completions: 'https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions',
+    responses: 'https://maas.qianwenaiapi.com/compatible-mode/v1/responses',
+    messages: 'https://maas.qianwenaiapi.com/apps/anthropic/v1/messages',
+  },
+  {
+    name: '千问 AI 平台 Token Plan',
+    chat_completions: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/chat/completions',
+    responses: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/responses',
+    messages: 'https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1/messages',
+  },
+  {
     name: 'OpenRouter',
     chat_completions: 'https://openrouter.ai/api/v1/chat/completions',
     responses: 'https://openrouter.ai/api/v1/responses',
