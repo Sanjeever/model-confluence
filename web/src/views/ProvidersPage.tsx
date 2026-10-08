@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { App, Button, Collapse, DatePicker, Empty, Form, Input, Modal, Popconfirm, Select, Space, Switch, Table, Tag, Typography } from 'antd'
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined } from '@ant-design/icons'
 import { api, type DeleteResult, type Page, type Provider } from '../api'
+import { providerTemplates } from '../providerTemplates'
 
 type ProviderKeyForm = { id?: number; name?: string; secret?: string; expires_at?: Dayjs | null; enabled?: boolean }
 type ProviderForm = {
@@ -17,111 +18,6 @@ type ProviderForm = {
   quota_codes?: string
   keys: ProviderKeyForm[]
 }
-
-const providerTemplates: Array<{ name: string; chat_completions: string; responses: string; messages: string }> = [
-  {
-    name: '火山方舟 Agent Plan',
-    chat_completions: 'https://ark.cn-beijing.volces.com/api/plan/v3/chat/completions',
-    responses: 'https://ark.cn-beijing.volces.com/api/plan/v3/responses',
-    messages: 'https://ark.cn-beijing.volces.com/api/plan/v1/messages',
-  },
-  {
-    name: '火山方舟 Coding Plan',
-    chat_completions: 'https://ark.cn-beijing.volces.com/api/coding/v3/chat/completions',
-    responses: 'https://ark.cn-beijing.volces.com/api/coding/v3/responses',
-    messages: 'https://ark.cn-beijing.volces.com/api/coding/v1/messages',
-  },
-  {
-    name: 'DeepSeek',
-    chat_completions: 'https://api.deepseek.com/chat/completions',
-    responses: 'https://api.deepseek.com/v1/responses',
-    messages: 'https://api.deepseek.com/anthropic/v1/messages',
-  },
-  {
-    name: '百炼按量计费',
-    chat_completions: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
-    responses: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses',
-    messages: 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
-  },
-  {
-    name: '百炼 Token Plan',
-    chat_completions: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/chat/completions',
-    responses: 'https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses',
-    messages: 'https://token-plan.cn-beijing.maas.aliyuncs.com/apps/anthropic/v1/messages',
-  },
-  {
-    name: '百炼 Coding Plan',
-    chat_completions: 'https://coding.dashscope.aliyuncs.com/compatible-mode/v1/chat/completions',
-    responses: 'https://coding.dashscope.aliyuncs.com/compatible-mode/v1/responses',
-    messages: 'https://coding.dashscope.aliyuncs.com/apps/anthropic/v1/messages',
-  },
-  {
-    name: '千问 AI 平台按量计费',
-    chat_completions: 'https://maas.qianwenaiapi.com/compatible-mode/v1/chat/completions',
-    responses: 'https://maas.qianwenaiapi.com/compatible-mode/v1/responses',
-    messages: 'https://maas.qianwenaiapi.com/apps/anthropic/v1/messages',
-  },
-  {
-    name: '千问 AI 平台 Token Plan',
-    chat_completions: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/chat/completions',
-    responses: 'https://token-plan.maas.qianwenaiapi.com/compatible-mode/v1/responses',
-    messages: 'https://token-plan.maas.qianwenaiapi.com/apps/anthropic/v1/messages',
-  },
-  {
-    name: 'OpenRouter',
-    chat_completions: 'https://openrouter.ai/api/v1/chat/completions',
-    responses: 'https://openrouter.ai/api/v1/responses',
-    messages: 'https://openrouter.ai/api/v1/messages',
-  },
-  {
-    name: 'Groq',
-    chat_completions: 'https://api.groq.com/openai/v1/chat/completions',
-    responses: 'https://api.groq.com/openai/v1/responses',
-    messages: '',
-  },
-  {
-    name: 'SiliconFlow 国际站',
-    chat_completions: 'https://api.siliconflow.com/v1/chat/completions',
-    responses: '',
-    messages: 'https://api.siliconflow.com/v1/messages',
-  },
-  {
-    name: 'SiliconFlow 国内站',
-    chat_completions: 'https://api.siliconflow.cn/v1/chat/completions',
-    responses: '',
-    messages: 'https://api.siliconflow.cn/v1/messages',
-  },
-  {
-    name: 'dots studio',
-    chat_completions: 'https://note3-prev-api.askdiandian.com/v1/chat/completions',
-    responses: '',
-    messages: 'https://note3-prev-api.askdiandian.com/v1/messages',
-  },
-  {
-    name: 'TeamoRouter 国际站',
-    chat_completions: 'https://api.teamorouter.com/v1/chat/completions',
-    responses: 'https://api.teamorouter.com/v1/responses',
-    messages: 'https://api.teamorouter.com/v1/messages',
-  },
-  {
-    name: 'TeamoRouter 国内站',
-    chat_completions: 'https://api.teamorouter.cn/v1/chat/completions',
-    responses: 'https://api.teamorouter.cn/v1/responses',
-    messages: 'https://api.teamorouter.cn/v1/messages',
-  },
-  {
-    name: 'NVIDIA NIM',
-    chat_completions: 'https://integrate.api.nvidia.com/v1/chat/completions',
-    responses: 'https://integrate.api.nvidia.com/v1/responses',
-    messages: 'https://integrate.api.nvidia.com/v1/messages',
-  },
-  {
-    name: 'EveryAPI',
-    chat_completions: 'https://api.everyapi.ai/v1/chat/completions',
-    responses: 'https://api.everyapi.ai/v1/responses',
-    messages: 'https://api.everyapi.ai/v1/messages',
-  },
-]
 
 export default function ProvidersPage() {
   const { message } = App.useApp()
