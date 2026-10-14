@@ -103,6 +103,11 @@ func TestCodexClientEntrypoints(t *testing.T) {
 					if r.Header.Get("ChatGPT-Account-ID") != "account" || r.Header.Get("Accept") != "text/event-stream" {
 						t.Error("bad OAuth headers")
 					}
+					for _, name := range []string{"Cf-Connecting-Ip", "X-Forwarded-For", "Cdn-Loop"} {
+						if r.Header.Get(name) != "" {
+							t.Errorf("inbound proxy header reached upstream: %s", name)
+						}
+					}
 					w.Header().Set("Content-Type", "text/event-stream")
 					io.WriteString(w, codexTextStream())
 				}))
@@ -119,6 +124,9 @@ func TestCodexClientEntrypoints(t *testing.T) {
 				}
 				r := httptest.NewRequest("POST", "/test", strings.NewReader(body))
 				r.Header.Set("ChatGPT-Account-ID", "untrusted-client-account")
+				r.Header.Set("Cf-Connecting-Ip", "192.0.2.1")
+				r.Header.Set("X-Forwarded-For", "192.0.2.1, 192.0.2.2")
+				r.Header.Set("Cdn-Loop", "cloudflare; loops=1")
 				w := httptest.NewRecorder()
 				h.generateAuthorized(w, r, source, nil, "test")
 				if w.Code != 200 || !strings.Contains(w.Body.String(), "hello") || strings.Contains(w.Body.String(), `"model":"real"`) {
@@ -136,6 +144,18 @@ func TestCodexClientEntrypoints(t *testing.T) {
 				}
 				if !strings.Contains(d.RequestBody, "temperature") || !strings.Contains(d.Attempts[0].ResponseBody, "response.completed") {
 					t.Fatal("raw payload lost")
+				}
+				var inboundHeaders, upstreamHeaders http.Header
+				if err := json.Unmarshal([]byte(d.RequestHeaders), &inboundHeaders); err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal([]byte(d.Attempts[0].RequestHeaders), &upstreamHeaders); err != nil {
+					t.Fatal(err)
+				}
+				for _, name := range []string{"Cf-Connecting-Ip", "X-Forwarded-For", "Cdn-Loop"} {
+					if inboundHeaders.Get(name) != r.Header.Get(name) || upstreamHeaders.Get(name) != "" {
+						t.Errorf("proxy header logs are incorrect: %s", name)
+					}
 				}
 			})
 		}

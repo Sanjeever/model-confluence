@@ -1003,7 +1003,10 @@ func applyProviderHeaders(header http.Header, provider store.Provider, secret st
 
 func copyRequestHeaders(destination, source http.Header) {
 	for key, values := range source {
-		if hopByHop(key) {
+		// 入站代理链描述客户端到网关的路径，不属于上游连接。
+		name := strings.ToLower(key)
+		if hopByHop(name) || name == "forwarded" || name == "x-real-ip" || name == "cdn-loop" ||
+			strings.HasPrefix(name, "x-forwarded-") || strings.HasPrefix(name, "cf-") {
 			continue
 		}
 		for _, value := range values {

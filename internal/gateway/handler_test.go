@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -15,6 +16,51 @@ import (
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 	"github.com/Sanjeever/model-confluence/internal/store"
 )
+
+func TestCopyRequestHeadersFiltersProxyHeaders(t *testing.T) {
+	source := http.Header{
+		"Forwarded":          {"for=192.0.2.1;proto=https;host=gateway.example"},
+		"X-Forwarded-For":    {"192.0.2.1, 192.0.2.2"},
+		"x-forwarded-host":   {"gateway.example"},
+		"X-Forwarded-Proto":  {"https"},
+		"X-Forwarded-Port":   {"443"},
+		"x-ReAl-Ip":          {"192.0.2.2"},
+		"Cf-Connecting-Ip":   {"192.0.2.1"},
+		"Cf-Ipcountry":       {"CN"},
+		"Cf-Ray":             {"test-ray"},
+		"Cf-Visitor":         {`{"scheme":"https"}`},
+		"cf-worker":          {"gateway.example"},
+		"CDN-LOOP":           {"cloudflare; loops=1"},
+		"Connection":         {"close"},
+		"Content-Length":     {"123"},
+		"Accept-Encoding":    {"gzip, br"},
+		"Content-Type":       {"application/json"},
+		"Authorization":      {"Bearer test-key"},
+		"User-Agent":         {"test-client"},
+		"Anthropic-Version":  {"2023-06-01"},
+		"Openai-Beta":        {"responses=v1"},
+		"X-Client-Extension": {"first", "second"},
+	}
+	original := source.Clone()
+	destination := make(http.Header)
+
+	copyRequestHeaders(destination, source)
+
+	want := http.Header{
+		"Content-Type":       {"application/json"},
+		"Authorization":      {"Bearer test-key"},
+		"User-Agent":         {"test-client"},
+		"Anthropic-Version":  {"2023-06-01"},
+		"Openai-Beta":        {"responses=v1"},
+		"X-Client-Extension": {"first", "second"},
+	}
+	if !reflect.DeepEqual(destination, want) {
+		t.Fatalf("unexpected upstream headers: got %v, want %v", destination, want)
+	}
+	if !reflect.DeepEqual(source, original) {
+		t.Fatal("inbound headers were modified")
+	}
+}
 
 type recordingResponseWriter struct {
 	header    http.Header
