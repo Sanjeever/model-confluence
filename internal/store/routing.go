@@ -152,7 +152,7 @@ func (s *Store) ProviderByID(id int64) (Provider, error) {
 func (s *Store) providerByID(id int64, includeSecrets bool) (Provider, error) {
 	var provider Provider
 	var staticHeadersJSON, quotaCodesJSON, createdAt string
-	err := s.db.QueryRow(`SELECT id, name, enabled, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE id = ? AND archived_at IS NULL`, id).Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt)
+	err := s.db.QueryRow(`SELECT id, name, enabled, kind, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE id = ? AND archived_at IS NULL`, id).Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.Kind, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt)
 	if err != nil {
 		return Provider{}, err
 	}
@@ -176,7 +176,7 @@ func (s *Store) providerByID(id int64, includeSecrets bool) (Provider, error) {
 
 // KeyAvailable 判断上游密钥当前是否可用于路由。
 func KeyAvailable(key UpstreamKey) bool {
-	if !key.Enabled || key.RuntimeStatus == "auth_invalid" || key.RuntimeStatus == "quota_exhausted" {
+	if !key.Enabled || key.RuntimeStatus == "auth_invalid" || key.RuntimeStatus == "quota_exhausted" && (key.RecoverAt == nil || time.Now().Before(*key.RecoverAt)) {
 		return false
 	}
 	if key.ExpiresAt != nil && time.Now().After(*key.ExpiresAt) {
@@ -193,7 +193,7 @@ func (s *Store) MarkUpstreamKey(id int64, status, reason string, recoverAt *time
 	if recoverAt != nil {
 		recover = formatTime(*recoverAt)
 	}
-	_, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = ?, runtime_reason = ?, recover_at = ?, updated_at = ? WHERE id = ?`, status, nullableString(reason), recover, formatTime(time.Now()), id)
+	_, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = ?, runtime_reason = ?, recover_at = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL`, status, nullableString(reason), recover, formatTime(time.Now()), id)
 	if err == nil {
 		s.invalidateConfig()
 	}
@@ -202,7 +202,7 @@ func (s *Store) MarkUpstreamKey(id int64, status, reason string, recoverAt *time
 
 // ResetUpstreamKeyRuntime 清除上游密钥的运行状态，不改变管理员启用状态或密钥原文。
 func (s *Store) ResetUpstreamKeyRuntime(id int64) error {
-	result, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, updated_at = ? WHERE id = ? AND archived_at IS NULL`, formatTime(time.Now()), id)
+	result, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, credential_revision = credential_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NULL AND NOT (auth_json != '' AND runtime_status = 'auth_invalid')`, formatTime(time.Now()), id)
 	if err != nil {
 		return err
 	}

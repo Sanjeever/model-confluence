@@ -7,11 +7,20 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/Sanjeever/model-confluence/internal/codex"
+	"github.com/Sanjeever/model-confluence/internal/protocol"
+)
+
+const (
+	ProviderGeneric    = "generic"
+	ProviderCodexOAuth = "codex_oauth"
 )
 
 var ErrProviderInUse = errors.New("provider is used by model routes")
 
 type Provider struct {
+	Kind          string            `json:"kind"`
 	ID            int64             `json:"id"`
 	Name          string            `json:"name"`
 	Enabled       bool              `json:"enabled"`
@@ -32,6 +41,7 @@ type ProviderPage struct {
 }
 
 type ProviderOption struct {
+	Kind      string            `json:"kind"`
 	ID        int64             `json:"id"`
 	Name      string            `json:"name"`
 	Enabled   bool              `json:"enabled"`
@@ -39,20 +49,26 @@ type ProviderOption struct {
 }
 
 type UpstreamKey struct {
-	ID            int64      `json:"id"`
-	Name          string     `json:"name"`
-	Secret        string     `json:"secret,omitempty"`
-	SecretHint    string     `json:"secret_hint"`
-	Position      int        `json:"position"`
-	Enabled       bool       `json:"enabled"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	RuntimeStatus string     `json:"runtime_status"`
-	RuntimeReason string     `json:"runtime_reason,omitempty"`
-	RecoverAt     *time.Time `json:"recover_at"`
-	LastUsedAt    *time.Time `json:"last_used_at"`
+	FileName             string          `json:"file_name,omitempty"`
+	OAuthIdentity        *codex.Identity `json:"oauth_identity,omitempty"`
+	AccessTokenExpiresAt *time.Time      `json:"access_token_expires_at,omitempty"`
+	LastRefresh          *time.Time      `json:"last_refresh,omitempty"`
+	CredentialRevision   int64           `json:"-"`
+	ID                   int64           `json:"id"`
+	Name                 string          `json:"name"`
+	Secret               string          `json:"secret,omitempty"`
+	SecretHint           string          `json:"secret_hint"`
+	Position             int             `json:"position"`
+	Enabled              bool            `json:"enabled"`
+	ExpiresAt            *time.Time      `json:"expires_at"`
+	RuntimeStatus        string          `json:"runtime_status"`
+	RuntimeReason        string          `json:"runtime_reason,omitempty"`
+	RecoverAt            *time.Time      `json:"recover_at"`
+	LastUsedAt           *time.Time      `json:"last_used_at"`
 }
 
 type CreateProviderInput struct {
+	Kind          string `json:"kind"`
 	Name          string
 	AuthType      string
 	AuthHeader    string
@@ -71,7 +87,7 @@ type CreateUpstreamKeyInput struct {
 }
 
 func (s *Store) ListProviders() ([]Provider, error) {
-	rows, err := s.db.Query(`SELECT id, name, enabled, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE archived_at IS NULL ORDER BY id DESC`)
+	rows, err := s.db.Query(`SELECT id, name, enabled, kind, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE archived_at IS NULL ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -117,7 +133,7 @@ func (s *Store) ListProvidersPage(page, pageSize int, name, authType string, ena
 	}
 	listArgs := append([]any(nil), args...)
 	listArgs = append(listArgs, pageSize, (page-1)*pageSize)
-	rows, err := s.db.Query(`SELECT id, name, enabled, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, listArgs...)
+	rows, err := s.db.Query(`SELECT id, name, enabled, kind, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE `+where+` ORDER BY id DESC LIMIT ? OFFSET ?`, listArgs...)
 	if err != nil {
 		return ProviderPage{}, err
 	}
@@ -142,14 +158,14 @@ func (s *Store) ListProvidersPage(page, pageSize int, name, authType string, ena
 }
 
 func (s *Store) ListProviderOptions() ([]ProviderOption, error) {
-	rows, err := s.db.Query(`SELECT id, name, enabled FROM providers WHERE archived_at IS NULL ORDER BY id DESC`)
+	rows, err := s.db.Query(`SELECT id, name, enabled, kind FROM providers WHERE archived_at IS NULL ORDER BY id DESC`)
 	if err != nil {
 		return nil, err
 	}
 	options := make([]ProviderOption, 0)
 	for rows.Next() {
 		var option ProviderOption
-		if err := rows.Scan(&option.ID, &option.Name, &option.Enabled); err != nil {
+		if err := rows.Scan(&option.ID, &option.Name, &option.Enabled, &option.Kind); err != nil {
 			rows.Close()
 			return nil, err
 		}
@@ -190,7 +206,7 @@ func (s *Store) ListProviderOptions() ([]ProviderOption, error) {
 func scanProvider(row rowScanner) (Provider, error) {
 	var provider Provider
 	var staticHeadersJSON, quotaCodesJSON, createdAt string
-	if err := row.Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt); err != nil {
+	if err := row.Scan(&provider.ID, &provider.Name, &provider.Enabled, &provider.Kind, &provider.AuthType, &provider.AuthHeader, &staticHeadersJSON, &quotaCodesJSON, &createdAt); err != nil {
 		return Provider{}, err
 	}
 	if err := json.Unmarshal([]byte(staticHeadersJSON), &provider.StaticHeaders); err != nil {
@@ -238,7 +254,7 @@ func (s *Store) hydrateProviders(providers []Provider, includeSecrets bool) erro
 		return err
 	}
 	endpointRows.Close()
-	keyRows, err := s.db.Query(`SELECT provider_id, id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at FROM upstream_keys WHERE provider_id IN (`+placeholders+`) AND archived_at IS NULL ORDER BY provider_id, position`, args...)
+	keyRows, err := s.db.Query(`SELECT provider_id, id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at, auth_json, file_name, access_token_expires_at, credential_revision FROM upstream_keys WHERE provider_id IN (`+placeholders+`) AND archived_at IS NULL ORDER BY provider_id, position`, args...)
 	if err != nil {
 		return err
 	}
@@ -263,6 +279,9 @@ func idQuery(ids []int64) (string, []any) {
 }
 
 func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
+	if err := normalizeProvider(&input); err != nil {
+		return Provider{}, err
+	}
 	staticHeaders, err := json.Marshal(input.StaticHeaders)
 	if err != nil {
 		return Provider{}, err
@@ -280,7 +299,7 @@ func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
 	if _, err := tx.Exec(`UPDATE providers SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, formatTime(now), input.Name); err != nil {
 		return Provider{}, err
 	}
-	result, err := tx.Exec(`INSERT INTO providers (name, enabled, auth_type, auth_header, static_headers_json, quota_codes_json, created_at, updated_at) VALUES (?, 1, ?, ?, ?, ?, ?, ?)`, input.Name, input.AuthType, nullableString(input.AuthHeader), string(staticHeaders), string(quotaCodes), formatTime(now), formatTime(now))
+	result, err := tx.Exec(`INSERT INTO providers (name, kind, enabled, auth_type, auth_header, static_headers_json, quota_codes_json, created_at, updated_at) VALUES (?, ?, 1, ?, ?, ?, ?, ?, ?)`, input.Name, input.Kind, input.AuthType, nullableString(input.AuthHeader), string(staticHeaders), string(quotaCodes), formatTime(now), formatTime(now))
 	if err != nil {
 		return Provider{}, err
 	}
@@ -306,11 +325,30 @@ func (s *Store) CreateProvider(input CreateProviderInput) (Provider, error) {
 		return Provider{}, err
 	}
 	s.invalidateConfig()
-	return Provider{ID: id, Name: input.Name, Enabled: true, AuthType: input.AuthType, AuthHeader: input.AuthHeader, StaticHeaders: input.StaticHeaders, QuotaCodes: input.QuotaCodes, Endpoints: input.Endpoints, CreatedAt: now}, nil
+	return Provider{ID: id, Kind: input.Kind, Name: input.Name, Enabled: true, AuthType: input.AuthType, AuthHeader: input.AuthHeader, StaticHeaders: input.StaticHeaders, QuotaCodes: input.QuotaCodes, Endpoints: input.Endpoints, CreatedAt: now}, nil
 }
 
 func (s *Store) SetProviderEnabled(id int64, enabled bool) error {
-	if err := updateEnabled(s.db, "providers", id, enabled); err != nil {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	result, err := tx.Exec(`UPDATE providers SET enabled = ?, updated_at = ? WHERE id = ? AND archived_at IS NULL`, enabled, formatTime(time.Now()), id)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	if _, err := tx.Exec(`UPDATE upstream_keys SET credential_revision = credential_revision + 1 WHERE provider_id = ? AND archived_at IS NULL`, id); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
 		return err
 	}
 	s.invalidateConfig()
@@ -318,6 +356,9 @@ func (s *Store) SetProviderEnabled(id int64, enabled bool) error {
 }
 
 func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
+	if err := normalizeProvider(&input); err != nil {
+		return err
+	}
 	staticHeaders, err := json.Marshal(input.StaticHeaders)
 	if err != nil {
 		return err
@@ -331,6 +372,13 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 		return err
 	}
 	defer tx.Rollback()
+	var kind string
+	if err := tx.QueryRow(`SELECT kind FROM providers WHERE id = ? AND archived_at IS NULL`, id).Scan(&kind); err != nil {
+		return err
+	}
+	if kind != input.Kind {
+		return fmt.Errorf("供应商类型不能修改")
+	}
 	now := formatTime(time.Now())
 	if _, err := tx.Exec(`UPDATE providers SET name = name || '#archived-' || id, updated_at = ? WHERE name = ? AND archived_at IS NOT NULL`, now, input.Name); err != nil {
 		return err
@@ -363,6 +411,13 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 			return err
 		}
 	}
+	if kind == ProviderCodexOAuth {
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		s.invalidateConfig()
+		return nil
+	}
 	existing, err := providerKeyIDs(tx, id)
 	if err != nil {
 		return err
@@ -383,9 +438,9 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 			return sql.ErrNoRows
 		}
 		if key.Secret == "" {
-			_, err = tx.Exec(`UPDATE upstream_keys SET name = ?, position = ?, enabled = ?, expires_at = ?, updated_at = ? WHERE id = ?`, nullableString(key.Name), position, enabled, expiresAt, now, key.ID)
+			_, err = tx.Exec(`UPDATE upstream_keys SET name = ?, position = ?, enabled = ?, expires_at = ?, credential_revision = credential_revision + 1, updated_at = ? WHERE id = ?`, nullableString(key.Name), position, enabled, expiresAt, now, key.ID)
 		} else {
-			_, err = tx.Exec(`UPDATE upstream_keys SET name = ?, secret = ?, position = ?, enabled = ?, expires_at = ?, runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, updated_at = ? WHERE id = ?`, nullableString(key.Name), key.Secret, position, enabled, expiresAt, now, key.ID)
+			_, err = tx.Exec(`UPDATE upstream_keys SET name = ?, secret = ?, position = ?, enabled = ?, expires_at = ?, runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, credential_revision = credential_revision + 1, updated_at = ? WHERE id = ?`, nullableString(key.Name), key.Secret, position, enabled, expiresAt, now, key.ID)
 		}
 		if err != nil {
 			return err
@@ -461,7 +516,7 @@ func (s *Store) DeleteProvider(id int64) (DeleteResult, error) {
 		if _, err := tx.Exec(`UPDATE providers SET enabled = 0, archived_at = ?, updated_at = ? WHERE id = ?`, now, now, id); err != nil {
 			return DeleteResult{}, err
 		}
-		if _, err := tx.Exec(`UPDATE upstream_keys SET enabled = 0, archived_at = ?, updated_at = ? WHERE provider_id = ? AND archived_at IS NULL`, now, now, id); err != nil {
+		if _, err := tx.Exec(`UPDATE upstream_keys SET enabled = 0, auth_json = '', credential_revision = credential_revision + 1, archived_at = ?, updated_at = ? WHERE provider_id = ? AND archived_at IS NULL`, now, now, id); err != nil {
 			return DeleteResult{}, err
 		}
 	} else {
@@ -517,7 +572,7 @@ func (s *Store) providerEndpoints(providerID int64) (map[string]string, error) {
 }
 
 func (s *Store) providerKeys(providerID int64, includeSecret bool) ([]UpstreamKey, error) {
-	rows, err := s.db.Query(`SELECT id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at FROM upstream_keys WHERE provider_id = ? AND archived_at IS NULL ORDER BY position`, providerID)
+	rows, err := s.db.Query(`SELECT id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at, auth_json, file_name, access_token_expires_at, credential_revision FROM upstream_keys WHERE provider_id = ? AND archived_at IS NULL ORDER BY position`, providerID)
 	if err != nil {
 		return nil, err
 	}
@@ -535,19 +590,32 @@ func (s *Store) providerKeys(providerID int64, includeSecret bool) ([]UpstreamKe
 
 func scanUpstreamKey(row rowScanner, providerID *int64, includeSecret bool) (UpstreamKey, error) {
 	var key UpstreamKey
-	var expiresAt, recoverAt, lastUsedAt sql.NullString
-	destinations := []any{&key.ID, &key.Name, &key.Secret, &key.Position, &key.Enabled, &expiresAt, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &lastUsedAt}
+	var expiresAt, recoverAt, lastUsedAt, accessExpiresAt sql.NullString
+	var authJSON string
+	destinations := []any{&key.ID, &key.Name, &key.Secret, &key.Position, &key.Enabled, &expiresAt, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &lastUsedAt, &authJSON, &key.FileName, &accessExpiresAt, &key.CredentialRevision}
 	if providerID != nil {
 		destinations = append([]any{providerID}, destinations...)
 	}
 	if err := row.Scan(destinations...); err != nil {
 		return UpstreamKey{}, err
 	}
+	if authJSON != "" {
+		auth, err := codex.ParseAuth([]byte(authJSON))
+		if err != nil {
+			return UpstreamKey{}, err
+		}
+		key.OAuthIdentity = &auth.Identity
+		key.LastRefresh = auth.LastRefresh
+	}
+	var err error
+	key.AccessTokenExpiresAt, err = parseNullableTime(accessExpiresAt)
+	if err != nil {
+		return UpstreamKey{}, err
+	}
 	key.SecretHint = secretHint(key.Secret)
 	if !includeSecret {
 		key.Secret = ""
 	}
-	var err error
 	if key.ExpiresAt, err = parseNullableTime(expiresAt); err != nil {
 		return UpstreamKey{}, err
 	}
@@ -901,7 +969,16 @@ func (s *Store) UpdateVirtualModel(id int64, input CreateVirtualModelInput) erro
 }
 
 func validateCandidateProtocols(tx *sql.Tx, candidates []CreateCandidateInput) error {
-	for _, candidate := range candidates {
+	for index := range candidates {
+		candidate := &candidates[index]
+		var kind string
+		if err := tx.QueryRow(`SELECT kind FROM providers WHERE id = ? AND archived_at IS NULL`, candidate.ProviderID).Scan(&kind); err != nil {
+			return err
+		}
+		if kind == ProviderCodexOAuth {
+			candidate.DefaultMaxOutputTokens = 0
+			candidate.MaxOutputTokens = 0
+		}
 		for _, protocol := range candidate.Protocols {
 			var exists int
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM provider_endpoints WHERE provider_id = ? AND protocol = ?`, candidate.ProviderID, protocol.Protocol).Scan(&exists); err != nil {
@@ -1043,4 +1120,26 @@ func optionalBool(value *bool, fallback bool) bool {
 		return fallback
 	}
 	return *value
+}
+
+func normalizeProvider(input *CreateProviderInput) error {
+	if input.Kind == "" {
+		input.Kind = ProviderGeneric
+	}
+	switch input.Kind {
+	case ProviderGeneric:
+	case ProviderCodexOAuth:
+		if len(input.Keys) > 0 || len(input.StaticHeaders) > 0 || input.AuthHeader != "" || input.AuthType != "" && input.AuthType != "oauth" {
+			return fmt.Errorf("Codex OAuth 不接受静态鉴权或密钥编辑")
+		}
+		if len(input.Endpoints) > 0 && (len(input.Endpoints) != 1 || input.Endpoints[protocol.Responses] != codex.ResponsesEndpoint) {
+			return fmt.Errorf("Codex OAuth 端点固定")
+		}
+		input.AuthType = "oauth"
+		input.StaticHeaders = map[string]string{}
+		input.Endpoints = map[string]string{protocol.Responses: codex.ResponsesEndpoint}
+	default:
+		return fmt.Errorf("供应商类型无效")
+	}
+	return nil
 }

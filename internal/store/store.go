@@ -124,6 +124,9 @@ func (s *Store) migrate() error {
 	if err := ensureColumn(tx, "model_candidates", "config_revision", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return fmt.Errorf("migrate candidate config revision: %w", err)
 	}
+	if err := ensureOAuthColumns(tx); err != nil {
+		return fmt.Errorf("migrate OAuth credentials: %w", err)
+	}
 	return tx.Commit()
 }
 
