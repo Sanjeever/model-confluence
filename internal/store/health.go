@@ -6,34 +6,36 @@ import (
 )
 
 type UpstreamKeyHealth struct {
-	ID            int64      `json:"id"`
-	ProviderName  string     `json:"provider_name"`
-	Name          string     `json:"name"`
-	Position      int        `json:"position"`
-	Enabled       bool       `json:"enabled"`
-	RuntimeStatus string     `json:"runtime_status"`
-	RuntimeReason string     `json:"runtime_reason,omitempty"`
-	RecoverAt     *time.Time `json:"recover_at"`
-	ExpiresAt     *time.Time `json:"expires_at"`
-	LastUsedAt    *time.Time `json:"last_used_at"`
+	ProviderKind         string     `json:"provider_kind"`
+	AccessTokenExpiresAt *time.Time `json:"access_token_expires_at,omitempty"`
+	ID                   int64      `json:"id"`
+	ProviderName         string     `json:"provider_name"`
+	Name                 string     `json:"name"`
+	Position             int        `json:"position"`
+	Enabled              bool       `json:"enabled"`
+	RuntimeStatus        string     `json:"runtime_status"`
+	RuntimeReason        string     `json:"runtime_reason,omitempty"`
+	RecoverAt            *time.Time `json:"recover_at"`
+	ExpiresAt            *time.Time `json:"expires_at"`
+	LastUsedAt           *time.Time `json:"last_used_at"`
 }
 
 type CandidateHealth struct {
-	CandidateID  int64     `json:"candidate_id"`
-	VirtualModel string    `json:"virtual_model"`
-	UpstreamModel string   `json:"upstream_model"`
-	ProviderName string    `json:"provider_name"`
-	LastFailure  string    `json:"last_failure"`
-	LastFailedAt time.Time `json:"last_failed_at"`
-	FailedCount  int       `json:"failed_count"`
+	CandidateID   int64     `json:"candidate_id"`
+	VirtualModel  string    `json:"virtual_model"`
+	UpstreamModel string    `json:"upstream_model"`
+	ProviderName  string    `json:"provider_name"`
+	LastFailure   string    `json:"last_failure"`
+	LastFailedAt  time.Time `json:"last_failed_at"`
+	FailedCount   int       `json:"failed_count"`
 }
 
 type HealthOverview struct {
-	Keys              []UpstreamKeyHealth `json:"keys"`
-	Candidates        []CandidateHealth   `json:"candidates"`
-	UnroutedModels    []string            `json:"unrouted_models"`
-	AbnormalKeyCount  int                 `json:"abnormal_key_count"`
-	FailedCandidates  int                 `json:"failed_candidates"`
+	Keys             []UpstreamKeyHealth `json:"keys"`
+	Candidates       []CandidateHealth   `json:"candidates"`
+	UnroutedModels   []string            `json:"unrouted_models"`
+	AbnormalKeyCount int                 `json:"abnormal_key_count"`
+	FailedCandidates int                 `json:"failed_candidates"`
 }
 
 // HealthStatus aggregates the runtime state of the upstream key pools and the
@@ -47,7 +49,7 @@ func (s *Store) HealthStatus() (HealthOverview, error) {
 
 	rows, err := s.db.Query(`
 SELECT k.id, COALESCE(p.name, ''), COALESCE(k.name, ''), k.position, k.enabled,
-  k.runtime_status, COALESCE(k.runtime_reason, ''), k.recover_at, k.expires_at, k.last_used_at
+  k.runtime_status, COALESCE(k.runtime_reason, ''), k.recover_at, k.expires_at, k.last_used_at, p.kind, k.access_token_expires_at
 FROM upstream_keys k
 JOIN providers p ON p.id = k.provider_id
 WHERE k.archived_at IS NULL
@@ -58,8 +60,8 @@ ORDER BY p.name, k.position`)
 	defer rows.Close()
 	for rows.Next() {
 		var key UpstreamKeyHealth
-		var recoverAt, expiresAt, lastUsedAt sql.NullString
-		if err := rows.Scan(&key.ID, &key.ProviderName, &key.Name, &key.Position, &key.Enabled, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &expiresAt, &lastUsedAt); err != nil {
+		var recoverAt, expiresAt, lastUsedAt, accessExpiresAt sql.NullString
+		if err := rows.Scan(&key.ID, &key.ProviderName, &key.Name, &key.Position, &key.Enabled, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &expiresAt, &lastUsedAt, &key.ProviderKind, &accessExpiresAt); err != nil {
 			return HealthOverview{}, err
 		}
 		if key.RecoverAt, err = parseNullableTime(recoverAt); err != nil {
@@ -69,6 +71,10 @@ ORDER BY p.name, k.position`)
 			return HealthOverview{}, err
 		}
 		if key.LastUsedAt, err = parseNullableTime(lastUsedAt); err != nil {
+			return HealthOverview{}, err
+		}
+		key.AccessTokenExpiresAt, err = parseNullableTime(accessExpiresAt)
+		if err != nil {
 			return HealthOverview{}, err
 		}
 		if key.RuntimeStatus != "available" {

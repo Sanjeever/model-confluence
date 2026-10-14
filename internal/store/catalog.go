@@ -412,6 +412,9 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 		}
 	}
 	if kind == ProviderCodexOAuth {
+		if _, err := tx.Exec(`UPDATE upstream_keys SET credential_revision = credential_revision + 1 WHERE provider_id = ? AND archived_at IS NULL`, id); err != nil {
+			return err
+		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
@@ -1137,6 +1140,9 @@ func normalizeProvider(input *CreateProviderInput) error {
 		}
 		input.AuthType = "oauth"
 		input.StaticHeaders = map[string]string{}
+		if input.QuotaCodes == nil {
+			input.QuotaCodes = []string{}
+		}
 		input.Endpoints = map[string]string{protocol.Responses: codex.ResponsesEndpoint}
 	default:
 		return fmt.Errorf("供应商类型无效")
