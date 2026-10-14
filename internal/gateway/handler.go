@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sanjeever/model-confluence/internal/codex"
 	"github.com/Sanjeever/model-confluence/internal/config"
 	"github.com/Sanjeever/model-confluence/internal/httpx"
 	"github.com/Sanjeever/model-confluence/internal/protocol"
@@ -25,6 +26,8 @@ import (
 )
 
 type Handler struct {
+	oauthLocks              sync.Map
+	oauthTokenEndpoint      string
 	store                   *store.Store
 	clientIP                *httpx.ClientIPResolver
 	maxBody                 int64
@@ -99,6 +102,7 @@ func (h *Handler) TestModel(ctx context.Context, model, prompt string) (int, []b
 }
 
 var (
+	ErrProviderModelsUnsupported = errors.New("Codex OAuth 不支持模型列表，请手工填写真实模型名")
 	// ErrProviderNoEndpoint 表示供应商没有配置任何协议端点，无法推导模型列表地址。
 	ErrProviderNoEndpoint = errors.New("供应商尚未配置协议端点")
 	// ErrProviderNoKey 表示供应商没有可用的上游密钥。
@@ -117,6 +121,9 @@ func (h *Handler) ListProviderModels(ctx context.Context, providerID int64) ([]s
 	provider, err := h.store.ProviderByID(providerID)
 	if err != nil {
 		return nil, err
+	}
+	if provider.Kind == store.ProviderCodexOAuth {
+		return nil, ErrProviderModelsUnsupported
 	}
 	endpoint, fromMessages := providerModelsEndpoint(provider)
 	if endpoint == "" {
@@ -252,6 +259,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		return
 	}
 
+	oauthRetry := make(map[int64]int64)
 	position := 0
 	retryIndex := 0
 	var invalidResponseErr error
@@ -274,7 +282,11 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			continue
 		}
 		var upstreamBody []byte
-		if route.UpstreamProtocol == inboundProtocol {
+		var ignored []string
+		isCodex := route.Provider.Kind == store.ProviderCodexOAuth
+		if isCodex {
+			upstreamBody, ignored, err = codex.PrepareRequest(body, inboundProtocol, route.UpstreamModel)
+		} else if route.UpstreamProtocol == inboundProtocol {
 			upstreamBody, err = rewriteModel(body, route.UpstreamModel)
 		} else {
 			upstreamBody, err = protocol.ConvertRequest(body, inboundProtocol, route.UpstreamProtocol, route.UpstreamModel, routeDefaultMax(route))
@@ -290,6 +302,20 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				return
 			}
 		}
+		var credential store.OAuthCredential
+		refreshed := false
+		if isCodex {
+			credential, refreshed, err = h.codexCredential(r.Context(), route.Key.ID, oauthRetry[route.Key.ID])
+			if err != nil {
+				if r.Context().Err() != nil {
+					h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: r.Context().Err().Error(), CompletedAt: time.Now().UTC()})
+					return
+				}
+				invalidResponseErr = err
+				continue
+			}
+			route.Key.CredentialRevision = credential.Revision
+		}
 		outbound, err := http.NewRequestWithContext(r.Context(), http.MethodPost, route.UpstreamEndpoint, bytes.NewReader(upstreamBody))
 		if err != nil {
 			finishError(http.StatusInternalServerError, "gateway_error", err.Error())
@@ -302,20 +328,28 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				outbound.Header.Set("anthropic-version", "2023-06-01")
 			}
 		}
-		applyProviderHeaders(outbound.Header, route.Provider, route.Key.Secret)
+		if isCodex {
+			codex.ApplyHeaders(outbound.Header, credential.Auth, route.UpstreamModel, upstreamBody)
+		} else {
+			applyProviderHeaders(outbound.Header, route.Provider, route.Key.Secret)
+		}
 		attemptStarted := time.Now()
 		attemptID, err := h.store.StartAttempt(store.AttemptStart{
 			RequestID: requestID, Position: position, ProviderID: route.Provider.ID, ProviderName: route.Provider.Name,
 			UpstreamKeyID: route.Key.ID, UpstreamKeyName: route.Key.Name, CandidateID: route.CandidateID,
 			UpstreamModel: route.UpstreamModel, Protocol: route.UpstreamProtocol, Endpoint: route.UpstreamEndpoint,
-			UpstreamStream: requestMeta.Stream, Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC(),
+			UpstreamStream: requestMeta.Stream || isCodex, IgnoredParameters: ignored, Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC(),
 		})
 		if err != nil {
 			finishError(http.StatusInternalServerError, "logging_error", err.Error())
 			return
 		}
 		position++
-		response, err := h.doUpstream(w, outbound, stream)
+		upstreamStream := stream
+		if isCodex {
+			upstreamStream = nil
+		}
+		response, err := h.doUpstream(w, outbound, upstreamStream)
 		if err != nil {
 			if r.Context().Err() != nil || errors.Is(err, errClientStreamWrite) {
 				cancelErr := r.Context().Err()
@@ -345,6 +379,18 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				continue
 			}
 			h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "failed", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: string(responseBody), CompletedAt: time.Now().UTC()})
+			if isCodex && response.StatusCode == http.StatusUnauthorized && !refreshed && oauthRetry[route.Key.ID] == 0 {
+				oauthRetry[route.Key.ID] = credential.Revision
+				index--
+				continue
+			}
+			if isCodex {
+				failure := codex.ClassifyError(responseBody, response.StatusCode, time.Now())
+				if stateErr := h.updateCodexKeyAfterError(route, failure, response.Header); stateErr != nil {
+					finishError(500, "gateway_error", stateErr.Error())
+					return
+				}
+			}
 			code := extractErrorCode(responseBody)
 			if code == "model_not_found" || code == "model_not_supported" {
 				_ = h.store.MarkModelCandidate(route.CandidateID, route.CandidateRevision, "config_error", code)
@@ -357,7 +403,9 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			}
 			if shouldTryNextKey(response.StatusCode) {
 				h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
-				h.updateKeyAfterError(route, response.StatusCode, responseBody, response.Header)
+				if !isCodex {
+					h.updateKeyAfterError(route, response.StatusCode, responseBody, response.Header)
+				}
 				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 					return
 				}
@@ -377,16 +425,55 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		}
 
 		_ = h.store.TouchUpstreamKey(route.Key.ID)
-		if requestMeta.Stream {
+		if isCodex {
+			err = h.proxyCodex(w, r.Context(), response, route, inboundProtocol, requestID, attemptID, started, attemptStarted, firstByte, stream, clientWantsStreamUsage(body))
+		} else if requestMeta.Stream {
 			err = h.proxyStream(w, r.Context(), response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte, stream)
 		} else {
 			err = h.proxyBuffered(w, response, route.UpstreamProtocol, inboundProtocol, route.VirtualModel, requestID, attemptID, started, attemptStarted, firstByte)
+		}
+		if errors.Is(err, errCodexResponseFinished) {
+			return
 		}
 		if err == nil {
 			h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
 			return
 		}
 		invalidResponseErr = err
+		if isCodex {
+			if stream != nil && stream.Committed() {
+				h.finishStreamError(w, inboundProtocol, requestID, started, stream, "upstream_error", err.Error())
+				return
+			}
+			var failure *codex.UpstreamError
+			if errors.As(err, &failure) {
+				if failure.Status == 401 && !refreshed && oauthRetry[route.Key.ID] == 0 {
+					oauthRetry[route.Key.ID] = credential.Revision
+					index--
+					continue
+				}
+				if stateErr := h.updateCodexKeyAfterError(route, failure, response.Header); stateErr != nil {
+					finishError(500, "gateway_error", stateErr.Error())
+					return
+				}
+				if failure.Code == "model_not_found" || failure.Code == "model_not_supported" {
+					if stateErr := h.store.MarkModelCandidate(route.CandidateID, route.CandidateRevision, "config_error", failure.Code); stateErr != nil {
+						finishError(500, "gateway_error", stateErr.Error())
+						return
+					}
+				} else if shouldTryNextKey(failure.Status) {
+					h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
+					if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+						return
+					}
+					continue
+				} else if failure.Status < 500 {
+					finishError(failure.Status, "upstream_error", failure.Error())
+					return
+				}
+			}
+			h.candidateFailed(route.CandidateID, route.CandidateRevision)
+		}
 		index = skipCandidate(routes, index, route.CandidateID)
 		if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 			return
@@ -751,13 +838,13 @@ func (h *Handler) completeAttemptFailure(id int64, started time.Time, err error)
 
 func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, body []byte, headers http.Header) {
 	if status == http.StatusUnauthorized {
-		h.store.MarkUpstreamKey(route.Key.ID, "auth_invalid", string(body), nil)
+		h.store.MarkUpstreamKeyRevision(route.Key.ID, route.Key.CredentialRevision, "auth_invalid", string(body), nil)
 		return
 	}
 	if status == http.StatusPaymentRequired {
 		code := extractErrorCode(body)
 		if contains(route.Provider.QuotaCodes, code) {
-			h.store.MarkUpstreamKey(route.Key.ID, "quota_exhausted", code, nil)
+			h.store.MarkUpstreamKeyRevision(route.Key.ID, route.Key.CredentialRevision, "quota_exhausted", code, nil)
 		}
 		return
 	}
@@ -766,7 +853,7 @@ func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, bod
 	}
 	code := extractErrorCode(body)
 	if contains(route.Provider.QuotaCodes, code) {
-		h.store.MarkUpstreamKey(route.Key.ID, "quota_exhausted", code, nil)
+		h.store.MarkUpstreamKeyRevision(route.Key.ID, route.Key.CredentialRevision, "quota_exhausted", code, nil)
 		return
 	}
 	now := time.Now()
@@ -774,7 +861,7 @@ func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, bod
 	if retryAfter, ok := parseRetryAfter(headers.Get("Retry-After"), now); ok {
 		recoverAt = retryAfter
 	}
-	h.store.MarkUpstreamKey(route.Key.ID, "rate_limited", code, &recoverAt)
+	h.store.MarkUpstreamKeyRevision(route.Key.ID, route.Key.CredentialRevision, "rate_limited", code, &recoverAt)
 }
 
 func parseRetryAfter(value string, now time.Time) (time.Time, bool) {
@@ -1016,4 +1103,13 @@ func protocolFromPath(path string) string {
 
 func routeDefaultMax(route store.ResolvedRoute) int {
 	return route.DefaultMaxOutputTokens
+}
+
+func clientWantsStreamUsage(body []byte) bool {
+	var payload struct {
+		StreamOptions struct {
+			IncludeUsage bool `json:"include_usage"`
+		} `json:"stream_options"`
+	}
+	return json.Unmarshal(body, &payload) == nil && payload.StreamOptions.IncludeUsage
 }

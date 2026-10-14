@@ -453,7 +453,7 @@ func (h *Handler) providerModels(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case errors.Is(err, sql.ErrNoRows):
 			httpx.WriteJSON(w, http.StatusNotFound, map[string]string{"error": "供应商不存在"})
-		case errors.Is(err, gateway.ErrProviderNoEndpoint), errors.Is(err, gateway.ErrProviderNoKey):
+		case errors.Is(err, gateway.ErrProviderNoEndpoint), errors.Is(err, gateway.ErrProviderNoKey), errors.Is(err, gateway.ErrProviderModelsUnsupported):
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		default:
 			httpx.WriteJSON(w, http.StatusBadGateway, map[string]string{"error": err.Error()})
