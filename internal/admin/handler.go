@@ -47,6 +47,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/admin/performance", h.requireSession(http.HandlerFunc(h.performance)))
 	mux.Handle("GET /api/admin/health", h.requireSession(http.HandlerFunc(h.health)))
 	mux.Handle("POST /api/admin/upstream-keys/{id}/reset-runtime", h.requireSession(h.requireCSRF(http.HandlerFunc(h.resetUpstreamKeyRuntime))))
+	mux.Handle("PATCH /api/admin/upstream-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h.updateEnabled(w, r, h.store.SetUpstreamKeyEnabled) }))))
+	mux.Handle("POST /api/admin/providers/{id}/auth-files", h.requireSession(h.requireCSRF(http.HandlerFunc(h.uploadAuthFile))))
+	mux.Handle("DELETE /api/admin/providers/{id}/auth-files/{key_id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteAuthFile))))
 	mux.Handle("GET /api/admin/costs", h.requireSession(http.HandlerFunc(h.costs)))
 	mux.Handle("GET /api/admin/model-names", h.requireSession(http.HandlerFunc(h.modelNames)))
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))
@@ -416,7 +419,7 @@ func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authType := strings.TrimSpace(r.URL.Query().Get("auth_type"))
-	if authType != "" && authType != "bearer" && authType != "x-api-key" && authType != "custom" {
+	if authType != "" && authType != "bearer" && authType != "x-api-key" && authType != "custom" && authType != "oauth" {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "auth_type 参数无效"})
 		return
 	}
@@ -528,7 +531,7 @@ func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) createModel(w http.ResponseWriter, r *http.Request) {
-	input, ok := decodeModelInput(w, r)
+	input, ok := h.decodeModelInput(w, r)
 	if !ok {
 		return
 	}
@@ -597,7 +600,7 @@ func (h *Handler) editModel(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的模型 ID"})
 		return
 	}
-	input, ok := decodeModelInput(w, r)
+	input, ok := h.decodeModelInput(w, r)
 	if !ok {
 		return
 	}
@@ -651,6 +654,7 @@ func (h *Handler) updateEnabled(w http.ResponseWriter, r *http.Request, update f
 
 func decodeProviderInput(w http.ResponseWriter, r *http.Request) (store.CreateProviderInput, bool) {
 	var input struct {
+		Kind          string                         `json:"kind"`
 		Name          string                         `json:"name"`
 		AuthType      string                         `json:"auth_type"`
 		AuthHeader    string                         `json:"auth_header"`
@@ -664,6 +668,18 @@ func decodeProviderInput(w http.ResponseWriter, r *http.Request) (store.CreatePr
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.AuthHeader = strings.TrimSpace(input.AuthHeader)
+	if input.Kind == store.ProviderCodexOAuth {
+		if input.Name == "" {
+			httpx.WriteJSON(w, 400, map[string]string{"error": "名称不能为空"})
+			return store.CreateProviderInput{}, false
+		}
+		return store.CreateProviderInput{Kind: input.Kind, Name: input.Name, AuthType: input.AuthType, AuthHeader: input.AuthHeader, StaticHeaders: input.StaticHeaders, QuotaCodes: input.QuotaCodes, Endpoints: input.Endpoints, Keys: input.Keys}, true
+	}
+	if input.Kind != "" && input.Kind != store.ProviderGeneric {
+		httpx.WriteJSON(w, 400, map[string]string{"error": "供应商类型无效"})
+		return store.CreateProviderInput{}, false
+	}
+
 	if input.Name == "" || len(input.Endpoints) == 0 || len(input.Keys) == 0 {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "名称、至少一个协议端点和至少一把密钥不能为空"})
 		return store.CreateProviderInput{}, false
@@ -693,10 +709,10 @@ func decodeProviderInput(w http.ResponseWriter, r *http.Request) (store.CreatePr
 			return store.CreateProviderInput{}, false
 		}
 	}
-	return store.CreateProviderInput{Name: input.Name, AuthType: input.AuthType, AuthHeader: input.AuthHeader, StaticHeaders: input.StaticHeaders, QuotaCodes: input.QuotaCodes, Endpoints: input.Endpoints, Keys: input.Keys}, true
+	return store.CreateProviderInput{Kind: input.Kind, Name: input.Name, AuthType: input.AuthType, AuthHeader: input.AuthHeader, StaticHeaders: input.StaticHeaders, QuotaCodes: input.QuotaCodes, Endpoints: input.Endpoints, Keys: input.Keys}, true
 }
 
-func decodeModelInput(w http.ResponseWriter, r *http.Request) (store.CreateVirtualModelInput, bool) {
+func (h *Handler) decodeModelInput(w http.ResponseWriter, r *http.Request) (store.CreateVirtualModelInput, bool) {
 	var input struct {
 		Name       string                       `json:"name"`
 		Candidates []store.CreateCandidateInput `json:"candidates"`
@@ -714,7 +730,12 @@ func decodeModelInput(w http.ResponseWriter, r *http.Request) (store.CreateVirtu
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "候选供应商、真实模型名和协议入口不能为空"})
 			return store.CreateVirtualModelInput{}, false
 		}
-		if candidate.DefaultMaxOutputTokens <= 0 || candidate.MaxOutputTokens < candidate.DefaultMaxOutputTokens {
+		provider, err := h.store.ProviderByID(candidate.ProviderID)
+		if err != nil {
+			writeStoreError(w, err, "供应商不存在")
+			return store.CreateVirtualModelInput{}, false
+		}
+		if provider.Kind != store.ProviderCodexOAuth && (candidate.DefaultMaxOutputTokens <= 0 || candidate.MaxOutputTokens < candidate.DefaultMaxOutputTokens) {
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "最大输出 Token 配置无效"})
 			return store.CreateVirtualModelInput{}, false
 		}
