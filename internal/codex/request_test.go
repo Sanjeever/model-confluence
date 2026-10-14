@@ -40,6 +40,13 @@ func TestPrepareRequest(t *testing.T) {
 			} else if !strings.Contains(string(data), "input_image") {
 				t.Fatalf("image lost: %s", data)
 			}
+			if sourceFields := []string{"messages", "system", "stop_sequences", "output_config"}; tc.source != protocol.Responses {
+				for _, field := range sourceFields {
+					if _, ok := raw[field]; ok {
+						t.Fatalf("source field %s leaked to Responses: %s", field, data)
+					}
+				}
+			}
 		})
 	}
 }

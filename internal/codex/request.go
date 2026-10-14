@@ -54,6 +54,7 @@ func PrepareRequest(body []byte, source, model string) ([]byte, []string, error)
 		if err != nil {
 			return nil, nil, err
 		}
+		raw = nil
 		if err := json.Unmarshal(converted, &raw); err != nil {
 			return nil, nil, err
 		}
