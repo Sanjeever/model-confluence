@@ -491,3 +491,24 @@ func TestCodexUnexpectedEOFAndCancellation(t *testing.T) {
 		})
 	}
 }
+
+func TestCodexCancellationWhileReadingHTTPError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":`)
+		w.(http.Flusher).Flush()
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	h, s, _ := codexGateway(t, srv, false)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, _, id := h.TestModel(ctx, "virtual", "hi")
+	d, err := s.RequestDetail(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Status != "cancelled" || len(d.Attempts) != 1 || d.Attempts[0].Status != "cancelled" || d.Attempts[0].ResponseBody != `{"error":` {
+		t.Fatalf("cancelled error response not recorded: %+v", d)
+	}
+}

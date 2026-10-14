@@ -372,6 +372,18 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			responseBody, readErr := io.ReadAll(response.Body)
 			response.Body.Close()
 			if readErr != nil {
+				if isCodex && r.Context().Err() != nil {
+					now := time.Now().UTC()
+					message := r.Context().Err().Error()
+					if logErr := h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "cancelled", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: message, CompletedAt: now}); logErr != nil {
+						finishError(http.StatusInternalServerError, "logging_error", logErr.Error())
+						return
+					}
+					if logErr := h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: now}); logErr != nil {
+						finishError(http.StatusInternalServerError, "logging_error", logErr.Error())
+					}
+					return
+				}
 				h.completeAttemptFailure(attemptID, attemptStarted, readErr)
 				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 					return
