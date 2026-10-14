@@ -259,7 +259,7 @@ func (h *Handler) requestDetail(w http.ResponseWriter, r *http.Request) {
 			if attempt.Status != "completed" || attempt.ResponseBody == "" || attempt.UpstreamProtocol == "" {
 				continue
 			}
-			usage, _, usageErr := protocol.ExtractUsage([]byte(attempt.ResponseBody), attempt.UpstreamProtocol, detail.Stream)
+			usage, _, usageErr := protocol.ExtractUsage([]byte(attempt.ResponseBody), attempt.UpstreamProtocol, attempt.UpstreamStream)
 			if usageErr == nil {
 				detail.InputTokens = toInt64Pointer(usage.InputTokens)
 				detail.CacheReadTokens = toInt64Pointer(usage.CacheReadTokens)
@@ -271,15 +271,17 @@ func (h *Handler) requestDetail(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
+
 	if detail.Stream && !detail.PayloadPruned {
 		detail.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(detail.ResponseBody), detail.InboundProtocol))
-		for index := range detail.Attempts {
-			attempt := &detail.Attempts[index]
-			if !attempt.PayloadPruned {
-				attempt.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(attempt.ResponseBody), attempt.UpstreamProtocol))
-			}
+	}
+	for index := range detail.Attempts {
+		attempt := &detail.Attempts[index]
+		if attempt.UpstreamStream && !attempt.PayloadPruned {
+			attempt.ResponseSummary = summaryPointer(protocol.SummarizeStream([]byte(attempt.ResponseBody), attempt.UpstreamProtocol))
 		}
 	}
+
 	httpx.WriteJSON(w, http.StatusOK, detail)
 }
 

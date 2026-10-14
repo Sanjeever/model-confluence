@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/protocol"
@@ -33,27 +34,36 @@ func (s *Store) StartRequest(input RequestStart) error {
 }
 
 type AttemptStart struct {
-	RequestID       string
-	Position        int
-	ProviderID      int64
-	ProviderName    string
-	UpstreamKeyID   int64
-	UpstreamKeyName string
-	CandidateID     int64
-	UpstreamModel   string
-	Protocol        string
-	Endpoint        string
-	Headers         string
-	Body            []byte
-	CreatedAt       time.Time
+	UpstreamStream    bool
+	IgnoredParameters []string
+	RequestID         string
+	Position          int
+	ProviderID        int64
+	ProviderName      string
+	UpstreamKeyID     int64
+	UpstreamKeyName   string
+	CandidateID       int64
+	UpstreamModel     string
+	Protocol          string
+	Endpoint          string
+	Headers           string
+	Body              []byte
+	CreatedAt         time.Time
 }
 
 func (s *Store) StartAttempt(input AttemptStart) (int64, error) {
+	if input.IgnoredParameters == nil {
+		input.IgnoredParameters = []string{}
+	}
+	ignored, err := json.Marshal(input.IgnoredParameters)
+	if err != nil {
+		return 0, err
+	}
 	body, encoding, err := encodePayload(input.Body)
 	if err != nil {
 		return 0, err
 	}
-	result, err := s.db.Exec(`INSERT INTO attempts (request_id, position, provider_id, provider_name, upstream_key_id, upstream_key_name, candidate_id, upstream_model, upstream_protocol, upstream_endpoint, status, request_headers, request_body, request_body_encoding, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?)`, input.RequestID, input.Position, input.ProviderID, input.ProviderName, input.UpstreamKeyID, nullableString(input.UpstreamKeyName), input.CandidateID, input.UpstreamModel, input.Protocol, input.Endpoint, input.Headers, body, encoding, formatTime(input.CreatedAt))
+	result, err := s.db.Exec(`INSERT INTO attempts (request_id, position, provider_id, provider_name, upstream_key_id, upstream_key_name, candidate_id, upstream_model, upstream_protocol, upstream_endpoint, upstream_stream, ignored_parameters_json, status, request_headers, request_body, request_body_encoding, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'in_progress', ?, ?, ?, ?)`, input.RequestID, input.Position, input.ProviderID, input.ProviderName, input.UpstreamKeyID, nullableString(input.UpstreamKeyName), input.CandidateID, input.UpstreamModel, input.Protocol, input.Endpoint, input.UpstreamStream, string(ignored), input.Headers, body, encoding, formatTime(input.CreatedAt))
 	if err != nil {
 		return 0, err
 	}
@@ -203,28 +213,30 @@ type RequestDetail struct {
 }
 
 type AttemptDetail struct {
-	ID               int64                   `json:"id"`
-	Position         int                     `json:"position"`
-	ProviderName     string                  `json:"provider_name"`
-	UpstreamKeyName  string                  `json:"upstream_key_name"`
-	UpstreamModel    string                  `json:"upstream_model"`
-	UpstreamProtocol string                  `json:"upstream_protocol"`
-	UpstreamEndpoint string                  `json:"upstream_endpoint"`
-	Status           string                  `json:"status"`
-	PayloadPruned    bool                    `json:"payload_pruned"`
-	RequestHeaders   string                  `json:"request_headers"`
-	RequestBody      string                  `json:"request_body"`
-	ResponseStatus   *int                    `json:"response_status"`
-	ResponseHeaders  string                  `json:"response_headers"`
-	ResponseBody     string                  `json:"response_body"`
-	ResponseSummary  *protocol.StreamSummary `json:"response_summary,omitempty"`
-	RawUsageJSON     string                  `json:"raw_usage_json"`
-	FirstByteMS      *int64                  `json:"first_byte_ms"`
-	FirstContentMS   *int64                  `json:"first_content_ms"`
-	TotalMS          *int64                  `json:"total_ms"`
-	ErrorMessage     string                  `json:"error_message"`
-	CreatedAt        time.Time               `json:"created_at"`
-	CompletedAt      *time.Time              `json:"completed_at"`
+	UpstreamStream    bool                    `json:"upstream_stream"`
+	IgnoredParameters []string                `json:"ignored_parameters"`
+	ID                int64                   `json:"id"`
+	Position          int                     `json:"position"`
+	ProviderName      string                  `json:"provider_name"`
+	UpstreamKeyName   string                  `json:"upstream_key_name"`
+	UpstreamModel     string                  `json:"upstream_model"`
+	UpstreamProtocol  string                  `json:"upstream_protocol"`
+	UpstreamEndpoint  string                  `json:"upstream_endpoint"`
+	Status            string                  `json:"status"`
+	PayloadPruned     bool                    `json:"payload_pruned"`
+	RequestHeaders    string                  `json:"request_headers"`
+	RequestBody       string                  `json:"request_body"`
+	ResponseStatus    *int                    `json:"response_status"`
+	ResponseHeaders   string                  `json:"response_headers"`
+	ResponseBody      string                  `json:"response_body"`
+	ResponseSummary   *protocol.StreamSummary `json:"response_summary,omitempty"`
+	RawUsageJSON      string                  `json:"raw_usage_json"`
+	FirstByteMS       *int64                  `json:"first_byte_ms"`
+	FirstContentMS    *int64                  `json:"first_content_ms"`
+	TotalMS           *int64                  `json:"total_ms"`
+	ErrorMessage      string                  `json:"error_message"`
+	CreatedAt         time.Time               `json:"created_at"`
+	CompletedAt       *time.Time              `json:"completed_at"`
 }
 
 func (s *Store) ListRequests(page, pageSize int, requestID string, accessKeyID *int64, createdFrom, createdTo time.Time) (RequestPage, error) {
@@ -305,7 +317,7 @@ func (s *Store) RequestDetail(id string) (RequestDetail, error) {
 }
 
 func (s *Store) requestAttempts(requestID string) ([]AttemptDetail, error) {
-	rows, err := s.db.Query(`SELECT id, position, COALESCE(provider_name, ''), COALESCE(upstream_key_name, ''), COALESCE(upstream_model, ''), COALESCE(upstream_protocol, ''), COALESCE(upstream_endpoint, ''), status, COALESCE(request_headers, ''), request_body, COALESCE(request_body_encoding, 'identity'), response_status, COALESCE(response_headers, ''), response_body, COALESCE(response_body_encoding, 'identity'), COALESCE(raw_usage_json, ''), first_byte_ms, first_content_ms, total_ms, COALESCE(error_message, ''), payload_pruned_at IS NOT NULL, created_at, completed_at FROM attempts WHERE request_id = ? ORDER BY position`, requestID)
+	rows, err := s.db.Query(`SELECT id, position, COALESCE(provider_name, ''), COALESCE(upstream_key_name, ''), COALESCE(upstream_model, ''), COALESCE(upstream_protocol, ''), COALESCE(upstream_endpoint, ''), upstream_stream, ignored_parameters_json, status, COALESCE(request_headers, ''), request_body, COALESCE(request_body_encoding, 'identity'), response_status, COALESCE(response_headers, ''), response_body, COALESCE(response_body_encoding, 'identity'), COALESCE(raw_usage_json, ''), first_byte_ms, first_content_ms, total_ms, COALESCE(error_message, ''), payload_pruned_at IS NOT NULL, created_at, completed_at FROM attempts WHERE request_id = ? ORDER BY position`, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -313,12 +325,13 @@ func (s *Store) requestAttempts(requestID string) ([]AttemptDetail, error) {
 	result := make([]AttemptDetail, 0)
 	for rows.Next() {
 		var item AttemptDetail
+		var ignored string
 		var requestBody, responseBody []byte
 		var requestBodyEncoding, responseBodyEncoding string
 		var responseStatus, firstByte, firstContent, total sql.NullInt64
 		var createdAt string
 		var completedAt sql.NullString
-		if err := rows.Scan(&item.ID, &item.Position, &item.ProviderName, &item.UpstreamKeyName, &item.UpstreamModel, &item.UpstreamProtocol, &item.UpstreamEndpoint, &item.Status, &item.RequestHeaders, &requestBody, &requestBodyEncoding, &responseStatus, &item.ResponseHeaders, &responseBody, &responseBodyEncoding, &item.RawUsageJSON, &firstByte, &firstContent, &total, &item.ErrorMessage, &item.PayloadPruned, &createdAt, &completedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Position, &item.ProviderName, &item.UpstreamKeyName, &item.UpstreamModel, &item.UpstreamProtocol, &item.UpstreamEndpoint, &item.UpstreamStream, &ignored, &item.Status, &item.RequestHeaders, &requestBody, &requestBodyEncoding, &responseStatus, &item.ResponseHeaders, &responseBody, &responseBodyEncoding, &item.RawUsageJSON, &firstByte, &firstContent, &total, &item.ErrorMessage, &item.PayloadPruned, &createdAt, &completedAt); err != nil {
 			return nil, err
 		}
 		decodedRequestBody, err := decodePayload(requestBody, requestBodyEncoding)
@@ -327,6 +340,9 @@ func (s *Store) requestAttempts(requestID string) ([]AttemptDetail, error) {
 		}
 		decodedResponseBody, err := decodePayload(responseBody, responseBodyEncoding)
 		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(ignored), &item.IgnoredParameters); err != nil {
 			return nil, err
 		}
 		item.RequestBody = string(decodedRequestBody)

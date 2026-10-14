@@ -308,7 +308,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			RequestID: requestID, Position: position, ProviderID: route.Provider.ID, ProviderName: route.Provider.Name,
 			UpstreamKeyID: route.Key.ID, UpstreamKeyName: route.Key.Name, CandidateID: route.CandidateID,
 			UpstreamModel: route.UpstreamModel, Protocol: route.UpstreamProtocol, Endpoint: route.UpstreamEndpoint,
-			Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC(),
+			UpstreamStream: requestMeta.Stream, Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC(),
 		})
 		if err != nil {
 			finishError(http.StatusInternalServerError, "logging_error", err.Error())

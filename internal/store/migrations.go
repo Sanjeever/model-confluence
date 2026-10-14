@@ -168,6 +168,8 @@ CREATE TABLE IF NOT EXISTS attempts (
     upstream_model TEXT,
     upstream_protocol TEXT,
     upstream_endpoint TEXT,
+    upstream_stream INTEGER NOT NULL DEFAULT 0,
+    ignored_parameters_json TEXT NOT NULL DEFAULT '[]',
     status TEXT NOT NULL,
     request_headers TEXT,
     request_body BLOB,

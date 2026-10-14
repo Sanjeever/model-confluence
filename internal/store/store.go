@@ -124,6 +124,9 @@ func (s *Store) migrate() error {
 	if err := ensureColumn(tx, "model_candidates", "config_revision", "INTEGER NOT NULL DEFAULT 1"); err != nil {
 		return fmt.Errorf("migrate candidate config revision: %w", err)
 	}
+	if err := ensureAttemptTransportColumns(tx); err != nil {
+		return fmt.Errorf("migrate attempt transport: %w", err)
+	}
 	if err := ensureOAuthColumns(tx); err != nil {
 		return fmt.Errorf("migrate OAuth credentials: %w", err)
 	}
@@ -343,4 +346,14 @@ func NewToken(bytes int) (string, error) {
 
 func formatTime(value time.Time) string {
 	return value.UTC().Format(timestampLayout)
+}
+
+func ensureAttemptTransportColumns(tx *sql.Tx) error {
+	if err := ensureColumn(tx, "attempts", "upstream_stream", "INTEGER"); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE attempts SET upstream_stream = (SELECT stream FROM requests WHERE requests.id = attempts.request_id) WHERE upstream_stream IS NULL`); err != nil {
+		return err
+	}
+	return ensureColumn(tx, "attempts", "ignored_parameters_json", "TEXT NOT NULL DEFAULT '[]'")
 }
