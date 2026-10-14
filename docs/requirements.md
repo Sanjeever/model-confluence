@@ -44,7 +44,9 @@
 
 供应商表示一组共享鉴权方式、上游密钥池和协议端点的 HTTP 服务。
 
-供应商配置鉴权方式（Bearer、`x-api-key` 或自定义头）、静态头、各协议完整请求 URL、密钥池和额度耗尽错误码精确列表。
+供应商类型创建后不可转换。普通供应商（`generic`）配置鉴权方式（Bearer、`x-api-key` 或自定义头）、静态头、各协议完整请求 URL、密钥池和额度耗尽错误码精确列表。
+
+Codex OAuth（`codex_oauth`）使用固定 Codex Responses 后端和 ChatGPT OAuth 账号池，不开放协议端点、静态鉴权和令牌编辑。三个客户端入口均可路由到该 Responses 上游。真实模型名手工填写，不拉取模型列表。
 
 优先级属于虚拟模型的候选顺序，过期时间属于每一把上游密钥，不设供应商全局优先级、模型映射或过期时间。管理后台提供配置模板以减少手工录入，具体模板与端点以 [模板定义](../web/src/providerTemplates.ts) 为准；模板不代表实时验证或自动同步。
 
@@ -53,6 +55,12 @@
 每把上游密钥有独立的管理员启停、过期时间和运行状态。鉴权失效、额度耗尽与限流状态不能覆盖管理员意图；管理员可以重置运行状态，但不会改变密钥原文或启停状态。
 
 密钥池按最久未使用轮询，时间相同保持池内顺序；明确的鉴权、限流或额度错误才在同候选内切换下一把。此规则用于分散调用，而非配额保证或并发公平性承诺；使用时间的维护以 [路由实现](../internal/store/routing.go) 为准。
+
+Codex OAuth 账号通过管理员上传原生 ChatGPT `auth.json` 或 codex-deck 导出文件建立。允许空账号池和删除最后一个账号；同用户、工作区的未删除账号在实例内拒绝重复导入。管理 API 返回文件名、身份、令牌到期、刷新时间及运行状态，不返回原始文件或令牌。JWT 解码用于元数据，不验证签名，也不代表上游鉴权成功。
+
+当前凭据保存在 SQLite。请求前按需提前刷新，每个账号串行执行，进入锁后重读当前凭据；刷新网络请求不持有事务，写回按凭据版本及活动、启用状态检查。刷新不改变管理员启停。确定性刷新失效持久标记 `auth_invalid`；网络故障、取消和 5xx 不永久淘汰账号。已过期 access token 仍可通过刷新使用。刷新与旧模型调用的状态回写均不能覆盖新配置或已删除账号。
+
+删除清空当前 OAuth 凭据并归档账号，保留身份和日志引用。删除不撤销 OpenAI 会话、不删除用户本地源文件；既有历史载荷仍按保留策略存储，可能包含旧 access token。永久鉴权失效需在外部重新登录，删除旧账号后重新导入，状态重置不能修复。
 
 ### 3.4 虚拟模型与候选
 
@@ -77,6 +85,8 @@
 - 是否支持并行工具调用；
 - 支持的推理强度集合；
 - 是否支持在 Chat 流中返回 usage。
+
+Codex 候选仅允许 Responses 上游协议。两个输出 Token 字段保存为 0，不表示输出长度控制或 Token 上限，管理界面隐藏这些配置。普通候选继续使用原配置规则。
 
 路由先按当前请求需要的能力过滤不合格候选，再按候选顺序选择。候选优先级高于“避免转换”：先选择最高优先级的合格候选，再在该候选内部优先使用与客户端相同的协议；没有同协议入口时，使用候选配置的协议后备顺序。
 
@@ -161,16 +171,28 @@ Chat Completions 与 Responses 的 `detail` 支持 `auto`、`low`、`high`；Mes
 
 Responses 转换保持无状态，避免让供应商会话标识变成网关隐式状态。`store: false` 可以接受；`previous_response_id`、conversation、background 或要求网关保存会话的请求必须明确拒绝。日志不能充当 Responses 会话存储。
 
-### 6.3 严格转换与两个例外
+### 6.3 严格转换与供应商例外
 
 跨协议只接受明确支持的字段。任何非空未知字段或不支持字段都在调用上游前返回 `400`，错误中列出 JSON 路径；值为 `null` 视为未设置。同协议透传未知字段。
 
-只有以下两类非语义信息允许在跨协议时丢弃，并且必须在需求和日志中可见：
+普通供应商只有以下两类非语义信息允许在跨协议时丢弃，并且必须在需求和日志中可见：
 
 - 源协议专用版本/Beta 请求头。同协议透传，跨协议记录但不转发；不能仅因存在 `anthropic-beta` 等头就拒绝请求。
 - 缓存性能提示，例如 Anthropic `cache_control` 与 OpenAI `prompt_cache_key`。同协议透传，跨协议记录但不尝试近似映射，最终以真实上游 usage 为准。
 
 思考内容不属于可丢弃例外。明文推理输出可以用于展示，但不证明历史回传等价；客户端显式要求目标协议无法提供的 thinking/reasoning 内容时必须在调用上游前拒绝。signature、redacted_thinking 和 encrypted content 不得伪造为其他协议字段。当前兼容行为与设计差距见第 17 节。
+
+Codex OAuth 接受以下专属忽略规则。跨协议时先从该候选的入站副本移除，再转换到 Responses；同协议绕过规范模型，保留可接受的未知字段、工具历史及 reasoning/encrypted_content。忽略路径保存到 attempt，不改写入站日志；后备普通候选仍使用入站原文。
+
+| 参数 | Codex 行为 |
+| --- | --- |
+| `max_tokens`、`max_completion_tokens`、`max_output_tokens` | 删除，不提供输出长度控制 |
+| `temperature`、`top_p` | 删除 |
+| `truncation`、`user` | 删除 |
+| `prompt_cache_options`、`prompt_cache_retention` | 删除 |
+| `safety_identifier`、`stream_options` | 删除；Chat 客户端 usage chunk 仍按入站 `include_usage` 选择 |
+
+具体字段集合以 [Codex 请求适配](../internal/codex/request.go) 和测试为实现依据，不允许任意丢弃未知字段。适配将字符串 input 转为数组，补空 instructions，设置上游 `stream=true`、`store=false`，将 system 角色转换为 developer，不注入默认工具或人设，也不覆盖工具选择与并行限制。有效 `previous_response_id`、conversation、`background=true` 或 `store=true` 在强制设置字段前拒绝；未设置 store 或 `store=false` 可接受。该例外不扩大现有跨协议能力边界。
 
 ## 7. 转换架构约束
 
@@ -195,6 +217,8 @@ Responses 转换保持无状态，避免让供应商会话标识变成网关隐�
 - 客户端断开后立即取消上游，不再故障切换，保存已获得的部分载荷并将请求标记为 `cancelled`。
 - 后台不提供取消按钮，也不实时尾随响应正文。进行中记录通过轮询显示状态、当前候选和已知延迟；完整载荷在 attempt 结束后展示。
 
+Codex 上游始终使用 SSE。非流式客户端通过终止 response 和真实 `output_item.done` 聚合 JSON，不以展示摘要重建响应。`response.completed` 及合法的 `response.incomplete` 部分结果可结束请求；`response.failed`、error 或没有终止事件的 EOF 作为失败。Codex 的 created 等元事件缓冲到首内容，心跳在提交后发送；提交前可切换，提交后失败发送客户端协议错误并结束。
+
 ## 9. 上游失败、密钥池与故障切换
 
 自动重放只允许发生在流式提交点之前，并且只针对明确可切换的错误。
@@ -213,6 +237,8 @@ Responses 转换保持无状态，避免让供应商会话标识变成网关隐�
 | `2xx` 但 JSON/SSE 不符合声明协议 | 候选故障 | 提交前切下一候选；提交后发流错误并结束 |
 
 额度耗尽以结构化错误码的精确值判定，不使用错误文案、子串或正则，避免误禁用密钥。设计要求有可靠恢复信号时可自动恢复；没有信号时保持耗尽，直到管理员重置。当前额度恢复能力与错误码读取范围见第 17 节。
+
+Codex HTTP 200 内的结构化 SSE 错误也参与状态分类。401 在尚未刷新时允许一次刷新后重发，每次模型 HTTP 调用建立独立 attempt；刚刷新仍持续 401 则标记鉴权失效。`usage_limit_reached` 视为额度耗尽，读取结构化 `resets_at` / `resets_in_seconds` 恢复信号；有信号时到时可再调用，无信号时等待管理员处理。普通 429 仍按 Retry-After 或默认冷却处理，不把所有 429 当永久额度耗尽。
 
 候选的瞬时连接故障、超时和服务端故障通过内存冷却与单次探测隔离，进程重启后清空；重试使用有上限的指数退避，避免立即反复冲击上游。阈值与退避时长以 [网关实现](../internal/gateway/handler.go) 和 [相关测试](../internal/gateway/handler_test.go) 为准。
 
@@ -248,6 +274,8 @@ Responses 转换保持无状态，避免让供应商会话标识变成网关隐�
 用户明确要求：已授权 AI 请求中的入站密钥、上游密钥、Cookie 和其他凭据也按原文写入日志，SQLite 全部明文，不做字段加密或 SQLCipher。管理网页默认遮罩敏感头，点击后可以查看。遮罩只影响界面展示，不改变存储或管理员 API 的明文契约。
 
 这是为私有实例排查和审计接受的风险：SQLite、快照或载荷下载泄露等同于其中的提示词、源代码和凭据泄露。压缩不构成加密；不要擅自将明文查看能力改成脱敏 API。
+
+OAuth 刷新请求、token 响应和完整 auth.json 不进入模型载荷日志或普通运行日志。模型调用的 Authorization access token 按既有明文日志契约保存。request.stream 表示客户端方式，attempt.upstream_stream 表示实际传输；非流式客户端的 Codex attempt 保存原始 SSE，request 保存最终 JSON。attempt 的忽略参数路径贯通持久化、管理 JSON 和详情展示。
 
 无效或缺失访问密钥的请求不保存完整正文和凭据，只记录精简安全事件：时间、IP、User-Agent、端点和失败原因，防止未授权访问者灌满数据库。
 
@@ -350,7 +378,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 ### 12.4 配置页
 
 - 访问密钥支持创建、停用、过期、归档和最后使用时间查看。
-- 供应商支持完整 URL、鉴权方式、静态头、额度错误码、结构化密钥池和状态编辑。
+- 普通供应商支持完整 URL、鉴权方式、静态头、额度错误码、结构化密钥池和状态编辑；Codex OAuth 提供文件上传、账号元数据、启停和删除，不提供登录、文件编辑、下载或导出。
 - 模型路由支持虚拟模型、候选顺序、真实模型、协议入口顺序和能力编辑。
 - 模型路由支持测试虚拟模型连通性；测试使用真实路由、转换、密钥池与日志流程，不保证逐一覆盖全部候选。
 - 被历史记录引用的配置需要保留关联，通过归档退出使用；无关联引用的配置才允许物理删除。仍被模型路由使用的供应商或协议端点不得删除。历史日志保存名称快照。
@@ -456,12 +484,13 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 | 受保护思考与 Messages 兼容（6.3） | Messages 请求/响应转换不保留 signature、redacted_thinking，流式 signature_delta 被忽略；thinking / tool_use / tool_result 的部分字段类型使用宽松解码，不能保证均在调用前报错。Responses 只提取明文 reasoning summary，不解析 encrypted_content。不伪造受保护字段，亦不承诺加密思考可转换。 | [请求](../internal/protocol/request.go)、[响应](../internal/protocol/response.go)、[流式解码](../internal/protocol/stream_decode.go)、[兼容测试](../internal/protocol/stream_test.go) |
 | 高优先级历史指令（6.1） | Chat 请求会拒绝对话中途的 system/developer；Responses 解码会收集这些指令，未统一执行相同的位置限制。保留仅接受开头指令的设计要求。 | [请求转换](../internal/protocol/request.go) |
 | 特殊工具与 ID（6.1、7） | Responses 的 custom / shell / apply_patch 定义可以规范化为具名工具，但响应编码缺少原工具类型上下文，通常返回 function_call，不能保证特殊工具历史还原。跨协议还会复用已有调用 / 响应 ID，仅部分对象生成新 ID；没有独立源 / 目标 ID 日志字段。安全 ID 和类型往返要求仍是设计目标。 | [工具定义](../internal/protocol/tools.go)、[响应编码](../internal/protocol/response.go)、[流式编码](../internal/protocol/stream_encode.go)、[日志 schema](../internal/store/migrations.go) |
-| 流式提交与协议校验（8、9） | 同协议 SSE 收到上游响应头即提交；跨协议在编码器产生首批输出时提交，可能早于首语义内容。心跳也可能提前提交 HTTP 头。转换首批输出前的失败可切换，已输出转换事件后不切换；不能承诺所有路径保留「首内容前切换」。同协议逐行透传也不提供完整 JSON/SSE 协议校验。 | [流式代理](../internal/gateway/handler.go)、[心跳](../internal/gateway/stream_heartbeat.go)、[编码器](../internal/protocol/stream_encode.go)、[提交测试](../internal/gateway/handler_test.go) |
-| 密钥恢复与结构化错误（9） | 普通 429 可按 Retry-After 恢复；quota_exhausted 当前保持不可用，直至管理员重置或更换密钥，不读取可靠额度恢复信号。错误码读取兼容嵌套 error.code / error.type 及顶层 code / type，仍为精确匹配，不依赖错误文案。 | [错误分类](../internal/gateway/handler.go)、[密钥可用性](../internal/store/routing.go)、[状态重置测试](../internal/store/upstream_keys_test.go) |
+| 流式提交与协议校验（8、9） | 普通供应商同协议 SSE 收到上游响应头即提交；跨协议在编码器产生首批输出时提交，可能早于首语义内容。心跳也可能提前提交 HTTP 头。转换首批输出前的失败可切换，已输出转换事件后不切换；不能承诺所有路径保留「首内容前切换」。普通同协议逐行透传也不提供完整 JSON/SSE 协议校验。Codex 使用独立终止语义检查并延迟到有效内容，不能推广为所有路径均已修复。 | [流式代理](../internal/gateway/handler.go)、[心跳](../internal/gateway/stream_heartbeat.go)、[编码器](../internal/protocol/stream_encode.go)、[提交测试](../internal/gateway/handler_test.go) |
+| 密钥恢复与结构化错误（9） | 普通 429 可按 Retry-After 恢复；普通供应商 quota_exhausted 保持不可用，直至管理员重置或更换密钥，不读取可靠额度恢复信号；Codex 已读取结构化额度恢复时间。错误码读取兼容嵌套 error.code / error.type 及顶层 code / type，仍为精确匹配，不依赖错误文案。 | [错误分类](../internal/gateway/handler.go)、[密钥可用性](../internal/store/routing.go)、[状态重置测试](../internal/store/upstream_keys_test.go) |
 | 模型列表与健康（4、12.2） | 模型列表查询所有启用且未归档的虚拟模型，未检查候选存在性；列表不表示即时可路由。上游健康中的候选失败来自历史 attempts，不能代表网关内存冷却或某个具体请求的能力匹配结果。 | [模型列表](../internal/store/routing.go)、[健康查询](../internal/store/health.go) |
 | 错误追踪（10） | 正常生成处理建立 request_id 并返回响应头，但鉴权失败和请求体读取失败发生在此之前；这些响应未必有 request_id，读取失败直接返回 HTTP 错误文本。设计要求统一协议错误不代表这些入口已满足。 | [网关鉴权与读取](../internal/gateway/handler.go) |
 | 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志存储协议、端点、响应状态码与头部，不保存原始 HTTP 状态行；attempt 未单独保存连接耗时。推理强度仅保存入站值，没有独立实际发送值字段。非流式 usage 保存原 usage JSON，流式 raw_usage_json 是合并后的标准化指标；原始事件在未清理的响应载荷中。 | [网关收尾](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[日志 schema](../internal/store/migrations.go) |
-| 客户端流式 usage（11.3） | 上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤，额外指标可能直接发送给客户端。仅写日志的要求仍是设计目标。 | [网关代理](../internal/gateway/handler.go)、[流式编码](../internal/protocol/stream_encode.go) |
+| Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
+| 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤，额外指标可能直接发送给客户端。仅写日志的要求仍是设计目标。 | [网关代理](../internal/gateway/handler.go)、[流式编码](../internal/protocol/stream_encode.go) |
 | 可信代理与退出（2、13） | 客户端 IP 解析只处理可信对端的 X-Forwarded-For，尚未支持 Forwarded。进程信号触发有期限的 HTTP Shutdown，但未把进程信号 context 直接作为所有请求 context 的取消源；不能声称信号到来立即取消所有上游。 | [IP 解析](../internal/httpx/httpx.go)、[程序入口](../cmd/model-confluence/main.go) |
 
 供应商兼容知识应落到协议字段和测试中。以已有火山方舟接入观察为例：Messages 的 `cache_creation_input_tokens` 按该协议映射为缓存写入；Chat / Responses 不能凭其他协议的字段补数。未来供应商改变回包时，以真实样本和对应协议的 usage 定义重新评估，不按供应商名称猜测指标。保留明文 reasoning summary 的转换能力，也不对只含 encrypted_content 的回包承诺等价转换。
