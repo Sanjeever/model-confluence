@@ -56,13 +56,13 @@ export default function HealthPage() {
           locale={{ emptyText: <Empty className="py-14" description="暂无上游密钥" /> }}
           columns={[
             { title: '供应商', dataIndex: 'provider_name', render: (value) => <strong>{value}</strong> },
-            { title: '密钥', width: 200, render: (_, record) => <span className="min-w-0 break-all">{record.name || `密钥 ${record.position + 1}`}</span> },
+            { title: '密钥 / 账号', width: 200, render: (_, record) => <span className="min-w-0 break-all">{record.name || `密钥 ${record.position + 1}`}</span> },
             { title: '状态', width: 120, render: (_, record) => <KeyStatusTag record={record} /> },
             { title: '恢复时间', dataIndex: 'recover_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
-            { title: '过期时间', dataIndex: 'expires_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
+            { title: '到期时间', width: 170, render: (_, record) => record.provider_kind === 'codex_oauth' ? <span className="text-xs">访问令牌<br />{record.access_token_expires_at ? new Date(record.access_token_expires_at).toLocaleString() : '—'}</span> : record.expires_at ? <span className="font-mono text-xs">{new Date(record.expires_at).toLocaleString()}</span> : '—' },
             { title: '最后使用', dataIndex: 'last_used_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
             { title: '备注', dataIndex: 'runtime_reason', ellipsis: true, render: (value) => value ? <code className="text-xs">{value}</code> : '—' },
-            { title: '操作', width: 110, align: 'right', render: (_, record) => record.enabled && record.runtime_status !== 'available' ? <Popconfirm title="立即恢复这把密钥？" description="请确认供应商侧已经恢复额度或服务。" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(record.id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> : '—' },
+            { title: '操作', width: 110, align: 'right', render: (_, record) => record.provider_kind === 'codex_oauth' && record.runtime_status === 'auth_invalid' ? <Typography.Text type="secondary">需重新导入</Typography.Text> : record.enabled && record.runtime_status !== 'available' ? <Popconfirm title="立即恢复这把密钥？" description="请确认供应商侧已经恢复额度或服务。" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(record.id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> : '—' },
           ]}
         />
       </Card>

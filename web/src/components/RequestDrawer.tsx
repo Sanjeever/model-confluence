@@ -32,10 +32,12 @@ export default function RequestDrawer({ detail, loading, open, onClose }: { deta
             label: <Space wrap><span className="font-mono text-[#d7783d]">#{attempt.position + 1}</span><strong>{attempt.provider_name}</strong><code className="break-all">{attempt.upstream_model}</code><Tag>{protocolName(attempt.upstream_protocol)}</Tag><Tag color={attempt.status === 'completed' ? 'success' : 'error'}>{statusName(attempt.status)}</Tag>{attempt.payload_pruned && <Tag>载荷已清理</Tag>}</Space>,
             children: <div className="space-y-6"><Descriptions size="small" column={{ xs: 1, sm: 2, lg: 3 }} items={[
               { key: 'endpoint', label: '上游端点', span: 3, children: <code className="break-all">{attempt.upstream_endpoint}</code> },
-              { key: 'key', label: '上游密钥', children: attempt.upstream_key_name || '未命名' },
+              { key: 'transport', label: '上游传输', children: attempt.upstream_stream ? 'SSE' : 'JSON' },
+              { key: 'ignored', label: '忽略参数', span: 3, children: attempt.ignored_parameters.length ? <Space wrap>{attempt.ignored_parameters.map((path) => <code key={path}>{path}</code>)}</Space> : '—' },
+              { key: 'key', label: '上游凭据', children: attempt.upstream_key_name || '未命名' },
               { key: 'status', label: '响应状态', children: attempt.response_status ?? '—' },
               { key: 'latency', label: '总耗时', children: attempt.total_ms == null ? '—' : `${attempt.total_ms} ms` },
-            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} pruned={attempt.payload_pruned} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} stream={detail.stream} summary={attempt.response_summary} pruned={attempt.payload_pruned} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
+            ]} /><PayloadPair title="发送到上游" headers={attempt.request_headers} body={attempt.request_body} reveal={reveal} pruned={attempt.payload_pruned} /><PayloadPair title="上游响应" headerLabel="响应头" headers={attempt.response_headers} body={attempt.response_body} reveal={reveal} stream={attempt.upstream_stream} summary={attempt.response_summary} pruned={attempt.payload_pruned} />{attempt.raw_usage_json && <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">原始用量</div><JsonPayload value={attempt.raw_usage_json} /></div>}</div>,
           }))} /> : <Empty className="py-16" description="该请求在调用上游前失败，没有产生上游尝试" /> },
         ]} />
       </>}

@@ -25,7 +25,7 @@ function cookie(name: string): string {
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const headers = new Headers(init.headers)
-  if (init.body) headers.set('Content-Type', 'application/json')
+  if (init.body && !(init.body instanceof FormData)) headers.set('Content-Type', 'application/json')
   const method = init.method?.toUpperCase() ?? 'GET'
   if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) {
     headers.set('X-CSRF-Token', decodeURIComponent(cookie('mc_csrf')))
@@ -102,6 +102,10 @@ export type AccessKey = {
 }
 
 export type UpstreamKey = {
+  file_name?: string
+  oauth_identity?: { user_id: string; account_id: string; email?: string; plan?: string }
+  access_token_expires_at?: string
+  last_refresh?: string
   id: number
   name: string
   secret?: string
@@ -116,10 +120,11 @@ export type UpstreamKey = {
 }
 
 export type Provider = {
+  kind: 'generic' | 'codex_oauth'
   id: number
   name: string
   enabled: boolean
-  auth_type: 'bearer' | 'x-api-key' | 'custom'
+  auth_type: 'bearer' | 'x-api-key' | 'custom' | 'oauth'
   auth_header?: string
   static_headers: Record<string, string>
   quota_codes: string[]
@@ -128,7 +133,7 @@ export type Provider = {
   created_at: string
 }
 
-export type ProviderOption = Pick<Provider, 'id' | 'name' | 'enabled' | 'endpoints'>
+export type ProviderOption = Pick<Provider, 'id' | 'name' | 'enabled' | 'endpoints' | 'kind'>
 
 export type AccessKeyOption = {
   id: number
@@ -216,6 +221,8 @@ export type RequestPage = {
 }
 
 export type AttemptDetail = {
+  upstream_stream: boolean
+  ignored_parameters: string[]
   id: number
   position: number
   provider_name: string
@@ -293,6 +300,8 @@ export type UsagePage = {
 }
 
 export type UpstreamKeyHealth = {
+  provider_kind: Provider['kind']
+  access_token_expires_at?: string
   id: number
   provider_name: string
   name: string
