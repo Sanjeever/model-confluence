@@ -62,3 +62,40 @@ func TestPrepareRequestStateAndUnknownFields(t *testing.T) {
 		t.Fatalf("unknown Responses field lost: %s %v", data, err)
 	}
 }
+
+func TestPrepareRequestLongToolCallID(t *testing.T) {
+	const id = "dfac9e45-a328-46c6-aed1-bad21b078e3f:call_4c686ec701d84e73be48d5de03fd475d"
+	for _, stream := range []string{"false", "true"} {
+		t.Run("stream="+stream, func(t *testing.T) {
+			body := []byte(`{"model":"virtual","stream":` + stream + `,"messages":[{"role":"assistant","tool_calls":[{"id":"` + id + `","type":"function","function":{"name":"read","arguments":"{}"}}]},{"role":"tool","tool_call_id":"` + id + `","content":"tool-result"}]}`)
+			data, _, err := PrepareRequest(body, protocol.Chat, "real-model")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var request struct {
+				Model  string `json:"model"`
+				Stream bool   `json:"stream"`
+				Input  []struct {
+					Type      string `json:"type"`
+					CallID    string `json:"call_id"`
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+					Output    string `json:"output"`
+				} `json:"input"`
+			}
+			if err := json.Unmarshal(data, &request); err != nil {
+				t.Fatal(err)
+			}
+			if request.Model != "real-model" || !request.Stream || len(request.Input) != 2 {
+				t.Fatalf("unexpected Codex request: %s", data)
+			}
+			call, result := request.Input[0], request.Input[1]
+			if call.CallID == "" || len(call.CallID) > 64 || call.CallID != result.CallID {
+				t.Fatalf("invalid Codex call IDs: %s", data)
+			}
+			if call.Type != "function_call" || call.Name != "read" || call.Arguments != "{}" || result.Type != "function_call_output" || result.Output != "tool-result" {
+				t.Fatalf("tool history changed: %s", data)
+			}
+		})
+	}
+}

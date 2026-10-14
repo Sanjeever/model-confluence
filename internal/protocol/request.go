@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 func ConvertRequest(body []byte, from, to, upstreamModel string, defaultMaxOutputTokens int) ([]byte, error) {
@@ -370,6 +371,37 @@ func encodeChatRequest(request Request) ([]byte, error) {
 }
 
 func encodeResponsesRequest(request Request) ([]byte, error) {
+	// 预留历史 ID，避免生成的短 ID 与后续调用或结果重名。
+	usedIDs := make(map[string]bool)
+	for _, message := range request.Messages {
+		for _, block := range message.Blocks {
+			if block.Type == "tool_call" {
+				usedIDs[block.ToolCall.ID] = true
+			}
+			if block.Type == "tool_result" {
+				usedIDs[block.ToolResult.CallID] = true
+			}
+		}
+	}
+	callIDs := make(map[string]string)
+	nextCallID := 1
+	callID := func(id string) string {
+		if utf8.RuneCountInString(id) <= 64 {
+			return id
+		}
+		if mapped, ok := callIDs[id]; ok {
+			return mapped
+		}
+		for {
+			mapped := fmt.Sprintf("call_mc_%d", nextCallID)
+			nextCallID++
+			if !usedIDs[mapped] {
+				usedIDs[mapped] = true
+				callIDs[id] = mapped
+				return mapped
+			}
+		}
+	}
 	input := make([]any, 0, len(request.Messages)*2)
 	for messageIndex, message := range request.Messages {
 		content, err := encodeResponsesContent(message.Blocks, message.Role, fmt.Sprintf("input[%d].content", messageIndex))
@@ -378,10 +410,10 @@ func encodeResponsesRequest(request Request) ([]byte, error) {
 		}
 		for _, block := range message.Blocks {
 			if block.Type == "tool_call" {
-				input = append(input, map[string]any{"type": "function_call", "call_id": block.ToolCall.ID, "name": block.ToolCall.Name, "arguments": string(block.ToolCall.Arguments)})
+				input = append(input, map[string]any{"type": "function_call", "call_id": callID(block.ToolCall.ID), "name": block.ToolCall.Name, "arguments": string(block.ToolCall.Arguments)})
 			}
 			if block.Type == "tool_result" {
-				input = append(input, map[string]any{"type": "function_call_output", "call_id": block.ToolResult.CallID, "output": block.ToolResult.Content})
+				input = append(input, map[string]any{"type": "function_call_output", "call_id": callID(block.ToolResult.CallID), "output": block.ToolResult.Content})
 			}
 		}
 		if content != nil {

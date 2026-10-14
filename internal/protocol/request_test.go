@@ -4,9 +4,87 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 const testImageDataURL = "data:image/png;base64,iVBORw0KGgo="
+
+func TestConvertRequestResponsesToolCallIDs(t *testing.T) {
+	for _, from := range []string{Chat, Messages} {
+		for _, streaming := range []struct {
+			name    string
+			enabled bool
+		}{{"non-stream", false}, {"stream", true}} {
+			for _, tc := range []struct {
+				name string
+				ids  []string
+			}{
+				{"reported ID", []string{"dfac9e45-a328-46c6-aed1-bad21b078e3f:call_4c686ec701d84e73be48d5de03fd475d"}},
+				{"64 characters", []string{strings.Repeat("a", 64)}},
+				{"65 characters", []string{strings.Repeat("a", 65)}},
+				{"64 Unicode characters", []string{strings.Repeat("中", 64)}},
+				{"shared prefix", []string{strings.Repeat("a", 64) + "1", strings.Repeat("a", 64) + "2"}},
+				{"reserved ID", []string{strings.Repeat("a", 65), "call_mc_1"}},
+			} {
+				t.Run(from+"/"+streaming.name+"/"+tc.name, func(t *testing.T) {
+					calls := Message{Role: "assistant"}
+					results := Message{Role: "user"}
+					arguments := json.RawMessage(`{"path":"/builtin-skills/reports/SKILL.md"}`)
+					for _, id := range tc.ids {
+						calls.Blocks = append(calls.Blocks, Block{Type: "tool_call", ToolCall: &ToolCall{ID: id, Name: "read", Arguments: arguments}})
+					}
+					// 并行调用的结果可以按不同顺序返回。
+					for i := len(tc.ids) - 1; i >= 0; i-- {
+						id := tc.ids[i]
+						results.Blocks = append(results.Blocks, Block{Type: "tool_result", ToolResult: &ToolResult{CallID: id, Content: "result_" + id}})
+					}
+					body, err := EncodeRequest(Request{Model: "source", Stream: streaming.enabled, Messages: []Message{calls, results}}, from)
+					if err != nil {
+						t.Fatal(err)
+					}
+					converted, err := ConvertRequest(body, from, Responses, "target", 1024)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var response struct {
+						Stream bool `json:"stream"`
+						Input  []struct {
+							Type      string `json:"type"`
+							CallID    string `json:"call_id"`
+							Name      string `json:"name"`
+							Arguments string `json:"arguments"`
+							Output    string `json:"output"`
+						} `json:"input"`
+					}
+					if err := json.Unmarshal(converted, &response); err != nil {
+						t.Fatal(err)
+					}
+					if response.Stream != streaming.enabled || len(response.Input) != 2*len(tc.ids) {
+						t.Fatalf("unexpected Responses request: %s", converted)
+					}
+					seen := make(map[string]bool)
+					for i, id := range tc.ids {
+						call := response.Input[i]
+						result := response.Input[len(response.Input)-1-i]
+						if call.Type != "function_call" || result.Type != "function_call_output" || call.CallID != result.CallID {
+							t.Fatalf("tool call and result do not match: %s", converted)
+						}
+						if call.CallID == "" || utf8.RuneCountInString(call.CallID) > 64 || seen[call.CallID] {
+							t.Fatalf("invalid or duplicate call ID %q", call.CallID)
+						}
+						seen[call.CallID] = true
+						if utf8.RuneCountInString(id) <= 64 && call.CallID != id {
+							t.Fatalf("short call ID changed: %q to %q", id, call.CallID)
+						}
+						if call.Name != "read" || call.Arguments != string(arguments) || result.Output != "result_"+id {
+							t.Fatalf("tool content changed: %s", converted)
+						}
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestConvertRequestImageContentOrder(t *testing.T) {
 	body := []byte(`{"model":"source","messages":[{"role":"user","content":[{"type":"text","text":"before"},{"type":"image_url","image_url":{"url":"` + testImageDataURL + `"}},{"type":"text","text":"after"}]}]}`)
