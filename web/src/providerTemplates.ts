@@ -12,6 +12,24 @@ export const providerTemplates: Array<{ name: string; chat_completions: string; 
     messages: 'https://ark.cn-beijing.volces.com/api/coding/v1/messages',
   },
   {
+    name: '腾讯云 TokenHub 中国大陆',
+    chat_completions: 'https://tokenhub.tencentmaas.com/v1/chat/completions',
+    responses: 'https://tokenhub.tencentmaas.com/v1/responses',
+    messages: 'https://tokenhub.tencentmaas.com/v1/messages',
+  },
+  {
+    name: '腾讯云 TokenHub 全球',
+    chat_completions: 'https://tokenhub-intl.tencentmaas.com/v1/chat/completions',
+    responses: 'https://tokenhub-intl.tencentmaas.com/v1/responses',
+    messages: 'https://tokenhub-intl.tencentmaas.com/v1/messages',
+  },
+  {
+    name: '腾讯云 Token Plan',
+    chat_completions: 'https://api.lkeap.cloud.tencent.com/plan/v3/chat/completions',
+    responses: 'https://api.lkeap.cloud.tencent.com/plan/v3/responses',
+    messages: 'https://api.lkeap.cloud.tencent.com/plan/anthropic/v1/messages',
+  },
+  {
     name: 'DeepSeek',
     chat_completions: 'https://api.deepseek.com/chat/completions',
     responses: 'https://api.deepseek.com/v1/responses',
