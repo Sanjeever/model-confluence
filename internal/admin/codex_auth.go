@@ -1,12 +1,15 @@
 package admin
 
 import (
+	"context"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
+	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/codex"
+	"github.com/Sanjeever/model-confluence/internal/gateway"
 	"github.com/Sanjeever/model-confluence/internal/httpx"
 	"github.com/Sanjeever/model-confluence/internal/store"
 )
@@ -38,6 +41,29 @@ func (h *Handler) uploadAuthFile(w http.ResponseWriter, r *http.Request) {
 	data, err := io.ReadAll(file)
 	if err != nil {
 		httpx.WriteJSON(w, 400, map[string]string{"error": "读取上传文件失败"})
+		return
+	}
+	provider, err := h.store.ProviderByID(id)
+	if err != nil {
+		writeStoreError(w, err, "供应商不存在")
+		return
+	}
+	if provider.Kind == store.ProviderAntigravityOAuth {
+		importer, ok := h.tester.(interface {
+			ImportAntigravityAccounts(context.Context, int64, string, []byte) (gateway.AntigravityImportResult, error)
+		})
+		if !ok {
+			httpx.WriteJSON(w, 503, map[string]string{"error": "Antigravity 账号导入不可用"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		defer cancel()
+		result, err := importer.ImportAntigravityAccounts(ctx, id, header.Filename, data)
+		if err != nil {
+			httpx.WriteJSON(w, 400, map[string]string{"error": err.Error()})
+			return
+		}
+		httpx.WriteJSON(w, http.StatusOK, result)
 		return
 	}
 	if _, err := codex.ParseAuth(data); err != nil {

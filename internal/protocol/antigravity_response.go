@@ -88,6 +88,10 @@ func antigravityUsage(raw json.RawMessage) (Usage, error) {
 		value := *source.Output + *source.Thinking
 		usage.OutputTokens = &value
 	}
+	if usage.TotalTokens == nil && usage.InputTokens != nil && usage.OutputTokens != nil {
+		total := *usage.InputTokens + *usage.OutputTokens
+		usage.TotalTokens = &total
+	}
 	return usage, nil
 }
 

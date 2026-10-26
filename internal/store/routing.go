@@ -27,6 +27,7 @@ type ResolvedRoute struct {
 	CandidateRevision      int64
 	UpstreamModel          string
 	DefaultMaxOutputTokens int
+	MaxOutputTokens        int
 	UpstreamProtocol       string
 	UpstreamEndpoint       string
 	Provider               Provider
@@ -125,7 +126,7 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 		sortKeysByUsage(provider.Keys)
 		for _, key := range provider.Keys {
 			routes = append(routes, ResolvedRoute{
-				VirtualModel: requirements.VirtualModel, CandidateID: candidate.ID, CandidateRevision: candidate.ConfigRevision, UpstreamModel: candidate.UpstreamModel, DefaultMaxOutputTokens: candidate.DefaultMaxOutputTokens,
+				VirtualModel: requirements.VirtualModel, CandidateID: candidate.ID, CandidateRevision: candidate.ConfigRevision, UpstreamModel: candidate.UpstreamModel, DefaultMaxOutputTokens: candidate.DefaultMaxOutputTokens, MaxOutputTokens: candidate.MaxOutputTokens,
 				UpstreamProtocol: protocol.Protocol, UpstreamEndpoint: endpoint, Provider: provider, Key: key, ProtocolConfig: protocol,
 			})
 		}

@@ -19,17 +19,19 @@ const (
 )
 
 type Config struct {
-	Command                 Command
-	ListenAddress           string
-	DatabasePath            string
-	AdminPassword           string
-	TrustedProxyCIDRs       []string
-	ConnectTimeout          time.Duration
-	ResponseHeaderTimeout   time.Duration
-	StreamIdleTimeout       time.Duration
-	StreamHeartbeatInterval time.Duration
-	MaxRequestBytes         int64
-	LogRetentionDays        int
+	Command                      Command
+	ListenAddress                string
+	DatabasePath                 string
+	AdminPassword                string
+	TrustedProxyCIDRs            []string
+	ConnectTimeout               time.Duration
+	ResponseHeaderTimeout        time.Duration
+	StreamIdleTimeout            time.Duration
+	StreamHeartbeatInterval      time.Duration
+	MaxRequestBytes              int64
+	LogRetentionDays             int
+	AntigravityOAuthClientID     string
+	AntigravityOAuthClientSecret string
 }
 
 func Load(args []string) (Config, error) {
@@ -82,17 +84,19 @@ func Load(args []string) (Config, error) {
 	}
 
 	return Config{
-		Command:                 command,
-		ListenAddress:           *listen,
-		DatabasePath:            filepath.Join(absDataDir, "model-confluence.db"),
-		AdminPassword:           *password,
-		TrustedProxyCIDRs:       splitCSV(*trustedProxies),
-		ConnectTimeout:          *connectTimeout,
-		ResponseHeaderTimeout:   *responseHeaderTimeout,
-		StreamIdleTimeout:       *streamIdleTimeout,
-		StreamHeartbeatInterval: *streamHeartbeatInterval,
-		MaxRequestBytes:         *maxRequestBytes,
-		LogRetentionDays:        *logRetentionDays,
+		Command:                      command,
+		ListenAddress:                *listen,
+		DatabasePath:                 filepath.Join(absDataDir, "model-confluence.db"),
+		AdminPassword:                *password,
+		TrustedProxyCIDRs:            splitCSV(*trustedProxies),
+		ConnectTimeout:               *connectTimeout,
+		ResponseHeaderTimeout:        *responseHeaderTimeout,
+		StreamIdleTimeout:            *streamIdleTimeout,
+		StreamHeartbeatInterval:      *streamHeartbeatInterval,
+		MaxRequestBytes:              *maxRequestBytes,
+		LogRetentionDays:             *logRetentionDays,
+		AntigravityOAuthClientID:     os.Getenv("MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_ID"),
+		AntigravityOAuthClientSecret: os.Getenv("MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_SECRET"),
 	}, nil
 }
 

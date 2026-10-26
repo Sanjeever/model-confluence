@@ -8,6 +8,7 @@ import (
 )
 
 type streamEncoder struct {
+	omitChatUsage    bool
 	protocol         string
 	model            string
 	id               string
@@ -435,7 +436,7 @@ func (e *streamEncoder) finish() ([][]byte, error) {
 			"id": e.id, "object": "chat.completion.chunk", "created": e.created, "model": e.model,
 			"choices": []any{map[string]any{"index": 0, "delta": map[string]any{}, "finish_reason": chatStop(e.stopReason)}},
 		}
-		if usagePresent(e.usage) {
+		if usagePresent(e.usage) && !e.omitChatUsage {
 			value["usage"] = chatUsage(e.usage)
 		}
 		final, err := dataSSE(value)

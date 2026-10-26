@@ -83,6 +83,10 @@ type StreamConverter struct {
 	encoder *streamEncoder
 }
 
+func (c *StreamConverter) SetChatUsage(enabled bool) {
+	c.encoder.omitChatUsage = !enabled
+}
+
 func NewStreamConverter(from, to, virtualModel string) (*StreamConverter, error) {
 	if from != Chat && from != Responses && from != Messages && from != Antigravity {
 		return nil, fmt.Errorf("unsupported source stream protocol %q", from)

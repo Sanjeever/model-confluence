@@ -18,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/Sanjeever/model-confluence/internal/antigravity"
 	"github.com/Sanjeever/model-confluence/internal/codex"
 	"github.com/Sanjeever/model-confluence/internal/config"
 	"github.com/Sanjeever/model-confluence/internal/httpx"
@@ -26,6 +27,7 @@ import (
 )
 
 type Handler struct {
+	antigravityOAuth        antigravity.OAuthClient
 	oauthLocks              sync.Map
 	oauthTokenEndpoint      string
 	store                   *store.Store
@@ -51,7 +53,7 @@ func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.Client
 		Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
 		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout, IdleConnTimeout: 90 * time.Second,
 	}
-	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, streamHeartbeatInterval: cfg.StreamHeartbeatInterval, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure)}
+	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, streamHeartbeatInterval: cfg.StreamHeartbeatInterval, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure), antigravityOAuth: antigravity.OAuthClient{ID: cfg.AntigravityOAuthClientID, Secret: cfg.AntigravityOAuthClientSecret}}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -124,6 +126,9 @@ func (h *Handler) ListProviderModels(ctx context.Context, providerID int64) ([]s
 	}
 	if provider.Kind == store.ProviderCodexOAuth {
 		return nil, ErrProviderModelsUnsupported
+	}
+	if provider.Kind == store.ProviderAntigravityOAuth {
+		return h.antigravityModels(ctx, provider)
 	}
 	endpoint, fromMessages := providerModelsEndpoint(provider)
 	if endpoint == "" {
@@ -279,6 +284,32 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		route := routes[index]
 		if (index == 0 || routes[index-1].CandidateID != route.CandidateID) && !h.candidateReady(route.CandidateID, route.CandidateRevision) {
 			index = skipCandidate(routes, index, route.CandidateID)
+			continue
+		}
+		if route.Provider.Kind == store.ProviderAntigravityOAuth {
+			result := h.attemptAntigravity(w, r, route, inboundProtocol, requestID, started, body, stream, oauthRetry[route.Key.ID], &position)
+			if result.finished {
+				return
+			}
+			if result.status != 0 {
+				finishError(result.status, "antigravity_error", result.err.Error())
+				return
+			}
+			invalidResponseErr = result.err
+			if result.retryRevision != 0 {
+				oauthRetry[route.Key.ID] = result.retryRevision
+				index--
+				continue
+			}
+			if result.nextKey {
+				h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
+			} else {
+				h.candidateFailed(route.CandidateID, route.CandidateRevision)
+				index = skipCandidate(routes, index, route.CandidateID)
+			}
+			if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
+				return
+			}
 			continue
 		}
 		var upstreamBody []byte

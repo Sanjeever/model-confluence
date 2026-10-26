@@ -1000,6 +1000,16 @@ func validateCandidateProtocols(tx *sql.Tx, candidates []CreateCandidateInput) e
 			candidate.DefaultMaxOutputTokens = 0
 			candidate.MaxOutputTokens = 0
 		}
+		if kind == ProviderAntigravityOAuth {
+			if candidate.DefaultMaxOutputTokens <= 0 || candidate.MaxOutputTokens < candidate.DefaultMaxOutputTokens {
+				return fmt.Errorf("Antigravity 最大输出 Token 配置无效")
+			}
+			for _, entry := range candidate.Protocols {
+				if len(entry.EffortLevels) > 0 {
+					return fmt.Errorf("Antigravity 尚不支持显式推理强度")
+				}
+			}
+		}
 		for _, protocol := range candidate.Protocols {
 			var exists int
 			if err := tx.QueryRow(`SELECT COUNT(*) FROM provider_endpoints WHERE provider_id = ? AND protocol = ?`, candidate.ProviderID, protocol.Protocol).Scan(&exists); err != nil {

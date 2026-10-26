@@ -31,11 +31,21 @@ type CandidateHealth struct {
 }
 
 type HealthOverview struct {
-	Keys             []UpstreamKeyHealth `json:"keys"`
-	Candidates       []CandidateHealth   `json:"candidates"`
-	UnroutedModels   []string            `json:"unrouted_models"`
-	AbnormalKeyCount int                 `json:"abnormal_key_count"`
-	FailedCandidates int                 `json:"failed_candidates"`
+	ModelCooldowns   []AntigravityModelCooldown `json:"model_cooldowns"`
+	Keys             []UpstreamKeyHealth        `json:"keys"`
+	Candidates       []CandidateHealth          `json:"candidates"`
+	UnroutedModels   []string                   `json:"unrouted_models"`
+	AbnormalKeyCount int                        `json:"abnormal_key_count"`
+	FailedCandidates int                        `json:"failed_candidates"`
+}
+
+type AntigravityModelCooldown struct {
+	UpstreamKeyID int64     `json:"upstream_key_id"`
+	ProviderName  string    `json:"provider_name"`
+	AccountName   string    `json:"account_name"`
+	UpstreamModel string    `json:"upstream_model"`
+	Reason        string    `json:"reason"`
+	RecoverAt     time.Time `json:"recover_at"`
 }
 
 // HealthStatus aggregates the runtime state of the upstream key pools and the
@@ -46,6 +56,30 @@ func (s *Store) HealthStatus() (HealthOverview, error) {
 	result.Keys = []UpstreamKeyHealth{}
 	result.Candidates = []CandidateHealth{}
 	result.UnroutedModels = []string{}
+	result.ModelCooldowns = []AntigravityModelCooldown{}
+	cooldownRows, err := s.db.Query(`SELECT k.id, p.name, COALESCE(k.name, ''), m.upstream_model, m.reason, m.recover_at FROM antigravity_model_states m JOIN upstream_keys k ON k.id = m.upstream_key_id JOIN providers p ON p.id = k.provider_id WHERE m.credential_revision = k.credential_revision AND m.recover_at > ? AND k.archived_at IS NULL AND p.archived_at IS NULL ORDER BY m.recover_at`, formatTime(time.Now()))
+	if err != nil {
+		return HealthOverview{}, err
+	}
+	for cooldownRows.Next() {
+		var state AntigravityModelCooldown
+		var recoverAt string
+		if err := cooldownRows.Scan(&state.UpstreamKeyID, &state.ProviderName, &state.AccountName, &state.UpstreamModel, &state.Reason, &recoverAt); err != nil {
+			cooldownRows.Close()
+			return HealthOverview{}, err
+		}
+		state.RecoverAt, err = time.Parse(timestampLayout, recoverAt)
+		if err != nil {
+			cooldownRows.Close()
+			return HealthOverview{}, err
+		}
+		result.ModelCooldowns = append(result.ModelCooldowns, state)
+	}
+	if err := cooldownRows.Err(); err != nil {
+		cooldownRows.Close()
+		return HealthOverview{}, err
+	}
+	cooldownRows.Close()
 
 	rows, err := s.db.Query(`
 SELECT k.id, COALESCE(p.name, ''), COALESCE(k.name, ''), k.position, k.enabled,

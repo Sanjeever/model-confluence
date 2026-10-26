@@ -670,7 +670,7 @@ func decodeProviderInput(w http.ResponseWriter, r *http.Request) (store.CreatePr
 	}
 	input.Name = strings.TrimSpace(input.Name)
 	input.AuthHeader = strings.TrimSpace(input.AuthHeader)
-	if input.Kind == store.ProviderCodexOAuth {
+	if input.Kind == store.ProviderCodexOAuth || input.Kind == store.ProviderAntigravityOAuth {
 		if input.Name == "" {
 			httpx.WriteJSON(w, 400, map[string]string{"error": "名称不能为空"})
 			return store.CreateProviderInput{}, false
@@ -741,9 +741,9 @@ func (h *Handler) decodeModelInput(w http.ResponseWriter, r *http.Request) (stor
 			httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "最大输出 Token 配置无效"})
 			return store.CreateVirtualModelInput{}, false
 		}
-		for _, protocol := range candidate.Protocols {
-			if !validProtocol(protocol.Protocol) {
-				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的协议：" + protocol.Protocol})
+		for _, entry := range candidate.Protocols {
+			if !validProtocol(entry.Protocol) && !(provider.Kind == store.ProviderAntigravityOAuth && entry.Protocol == protocol.Antigravity) {
+				httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "不支持的协议：" + entry.Protocol})
 				return store.CreateVirtualModelInput{}, false
 			}
 		}
