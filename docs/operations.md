@@ -81,6 +81,8 @@ docker compose up -d
 | `--stream-heartbeat-interval` | — | `0` | SSE 心跳间隔；`0` 关闭心跳 |
 | `--max-request-bytes` | — | `67108864` | 入站生成请求体上限（64 MiB），必须大于 0 |
 | `--log-retention-days` | `MODEL_CONFLUENCE_LOG_RETENTION_DAYS` | `0` | 完整日志载荷保留天数；`0` 永久保留，不能为负数 |
+| — | `MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_ID` | 空 | 签发 Antigravity refresh token 的 OAuth 客户端 ID |
+| — | `MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_SECRET` | 空 | 上述 OAuth 客户端的 secret，只在运行时注入 |
 
 上游生成请求不设置总时长上限。心跳只能维持客户端连接，不会重置上游读取空闲超时；开启心跳后，HTTP 响应可能在收到模型内容前已发送 `200`，后续错误只能以 SSE 表达。
 
@@ -90,7 +92,7 @@ docker compose up -d
 
 ## 管理后台与客户端调用
 
-登录管理后台后，创建访问密钥。普通供应商配置完整协议端点和上游密钥；Codex OAuth 按下文上传账号凭据。随后创建虚拟模型及有序候选。客户端的 `model` 使用虚拟模型名。
+登录管理后台后，创建访问密钥。普通供应商配置完整协议端点和上游密钥；OAuth 供应商按下文导入账号凭据。随后创建虚拟模型及有序候选。客户端的 `model` 使用虚拟模型名。
 
 获取模型列表：
 
@@ -110,7 +112,22 @@ curl.exe http://127.0.0.1:8080/v1/chat/completions `
 
 模型 API 接受 `Authorization: Bearer <key>` 或 `x-api-key: <key>`；同时提供且值不一致时拒绝。入口与鉴权定义见 [网关](../internal/gateway/handler.go)。模型列表表示管理员启用的模型，不保证每个模型此刻都有可用路由。
 
-配置候选时可以手动拉取供应商模型名；该功能从已配置的生成端点推导模型列表地址，供应商需提供兼容的列表 API，不是自动同步。管理后台的连通性测试针对虚拟模型，经过实际路由选择、转换、密钥池及日志流程；一次成功只说明本次选中的路由可用，不验证所有候选、协议或流式能力。
+配置候选时可以手动拉取供应商模型名；普通供应商从生成端点推导列表地址，Antigravity 使用专属元数据接口，Codex 不支持此功能。模型目录不表示账号具有相应调用权限，也不会自动同步路由。管理后台的连通性测试针对虚拟模型，经过实际路由选择、转换、密钥池及日志流程；一次成功只说明本次选中的路由可用，不验证所有候选、协议或流式能力。
+
+### Antigravity OAuth
+
+此接入为实验性能力，尚无真实订阅账号验收。Google 当前[服务条款第 6 条](https://antigravity.google/terms)限制个人订阅通过第三方工具访问，并说明可能暂停或终止 Antigravity、Gemini CLI 账号。接通内部接口不代表官方允许将订阅用于第三方 API 网关。
+
+1. 在运行环境注入上述 OAuth client ID 和 secret。它们必须属于签发 refresh token 的客户端；本项目不内置第三方客户端凭据，不轮流尝试其他客户端。自行注册的新客户端不保证拥有 Antigravity 权限。
+2. 在供应商页创建「Antigravity OAuth（实验性）」供应商，然后导入 Antigravity-Manager 导出的账号 JSON。支持 `{"accounts":[{"email":"user@example.com","refresh_token":"请替换"}]}`、单个账号项及含 `token.refresh_token` 的完整账号文件；可附带 `client_id` 检查绑定。上传限 1 MiB，每个文件最多 100 个账号，批量导入分别返回成功项和失败原因。文件中的身份和项目不作为鉴权依据。
+3. 导入会刷新令牌、验证 Google 身份，并通过 `loadCodeAssist` 查询项目。账号应先在 Antigravity 完成初始化；没有真实项目时明确失败。完整账号文件中的 `oauth_client_key` 是外部应用的本地标识，不能代替 OAuth client ID；缺少 `client_id` 时使用运行配置中的唯一客户端。
+4. 创建虚拟模型候选，选择 Antigravity 上游入口，填写真实模型名及输出 Token 限制。可手动拉取模型目录；不会自动创建路由。客户端继续使用现有 Chat Completions、Responses 或 Messages 入口。
+
+本版本支持文本、SSE、非流式聚合、function 工具定义及无签名的工具历史、base64/data URL 图片输入。远程图片 URL、显式推理配置、受保护思考历史、要求 `thoughtSignature` 的工具调用、Responses 的 custom/shell/apply_patch 工具、`strict:true` 和禁止并行工具的控制暂不支持；无法转换时明确报错，不静默删减。不能据此承诺 Codex、Claude Code 默认参数可直接使用，也不能承诺所有订阅模型均兼容。上游协议、参数校验及终止语义以[请求适配](../internal/protocol/antigravity_request.go)和[响应适配](../internal/protocol/antigravity_response.go)为准。
+
+上游始终使用 SSE；非流式客户端收到聚合 JSON。401 在首内容前最多触发一次刷新重发；429 按账号与真实模型保存冷却，优先读取结构化 `RetryInfo` 或 `Retry-After`，无恢复信号时冷却一分钟。上游健康页显示模型冷却，可清除此账号的模型冷却。刷新不会开启手工停用的账号；明确的 `invalid_grant` 或刷新后持续 401 需要重新导入。删除账号清空当前凭据并归档，历史载荷仍按日志保留策略保存。
+
+生成请求和 Authorization access token 遵循既有明文日志契约；OAuth 刷新正文、refresh token 和完整导入文件不进入模型载荷或运行日志。浏览器直接登录、IDE 账号切换及签名历史存储不在本版本内。
 
 ### Codex OAuth 账号
 

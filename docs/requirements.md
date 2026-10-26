@@ -48,6 +48,8 @@
 
 Codex OAuth（`codex_oauth`）使用固定 Codex Responses 后端和 ChatGPT OAuth 账号池，不开放协议端点、静态鉴权和令牌编辑。三个客户端入口均可路由到该 Responses 上游。真实模型名手工填写，不拉取模型列表。
 
+Antigravity OAuth（`antigravity_oauth`）是实验性原生供应商，使用 Google OAuth 账号池及固定 Cloud Code 内部接口。三个客户端入口均经受限规范模型转换到内部 `antigravity` 上游协议，不增加公开 Gemini API，不作为 Messages 或 Responses 透传。账号通过 JSON 导入，并在线刷新令牌、验证身份及查询项目；OAuth 客户端凭据只在运行时注入，且必须与 refresh token 绑定一致。使用条件和操作见[运行说明](operations.md#antigravity-oauth)，真实订阅兼容性尚未验收。
+
 优先级属于虚拟模型的候选顺序，过期时间属于每一把上游密钥，不设供应商全局优先级、模型映射或过期时间。管理后台提供配置模板以减少手工录入，具体模板与端点以 [模板定义](../web/src/providerTemplates.ts) 为准；模板不代表实时验证或自动同步。
 
 ### 3.3 上游密钥
@@ -87,6 +89,8 @@ Codex OAuth 账号通过管理员上传原生 ChatGPT `auth.json` 或 codex-deck
 - 是否支持在 Chat 流中返回 usage。
 
 Codex 候选仅允许 Responses 上游协议。两个输出 Token 字段保存为 0，不表示输出长度控制或 Token 上限，管理界面隐藏这些配置。普通候选继续使用原配置规则。
+
+Antigravity 候选仅使用内部 Antigravity 入口，执行候选默认输出 Token 与上限，不声明显式推理强度。模型目录由管理员主动拉取，不自动同步路由，也不构成账号权限证明。
 
 路由先按当前请求需要的能力过滤不合格候选，再按候选顺序选择。候选优先级高于“避免转换”：先选择最高优先级的合格候选，再在该候选内部优先使用与客户端相同的协议；没有同协议入口时，使用候选配置的协议后备顺序。
 
@@ -241,6 +245,8 @@ Codex 上游始终使用 SSE。非流式客户端通过终止 response 和真实
 额度耗尽以结构化错误码的精确值判定，不使用错误文案、子串或正则，避免误禁用密钥。设计要求有可靠恢复信号时可自动恢复；没有信号时保持耗尽，直到管理员重置。当前额度恢复能力与错误码读取范围见第 17 节。
 
 Codex HTTP 200 内的结构化 SSE 错误也参与状态分类。401 在尚未刷新时允许一次刷新后重发，每次模型 HTTP 调用建立独立 attempt；刚刷新仍持续 401 则标记鉴权失效。`usage_limit_reached` 视为额度耗尽，读取结构化 `resets_at` / `resets_in_seconds` 恢复信号；有信号时到时可再调用，无信号时等待管理员处理。普通 429 仍按 Retry-After 或默认冷却处理，不把所有 429 当永久额度耗尽。
+
+Antigravity 的 HTTP 与 SSE 结构化错误统一分类；首内容前 401 最多刷新重发一次。Google OAuth 的 `invalid_grant` 确认凭据失效；客户端配置错误、网络错误与 5xx 不永久淘汰账号。429 保存在账号与真实模型的独立冷却状态中，不推断为整个订阅额度耗尽；读取 `RetryInfo` 或 `Retry-After`，无信号时冷却一分钟。模型冷却按凭据版本保护，正常刷新保留同一配置的冷却，管理员重置清除该账号的模型冷却。流式终止依赖已知 `finishReason`，在终止前 EOF 作为失败；首内容发出后禁止切换。
 
 候选的瞬时连接故障、超时和服务端故障通过内存冷却与单次探测隔离，进程重启后清空；重试使用有上限的指数退避，避免立即反复冲击上游。阈值与退避时长以 [网关实现](../internal/gateway/handler.go) 和 [相关测试](../internal/gateway/handler_test.go) 为准。
 
@@ -492,6 +498,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 | 错误追踪（10） | 正常生成处理建立 request_id 并返回响应头，但鉴权失败和请求体读取失败发生在此之前；这些响应未必有 request_id，读取失败直接返回 HTTP 错误文本。设计要求统一协议错误不代表这些入口已满足。 | [网关鉴权与读取](../internal/gateway/handler.go) |
 | 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志存储协议、端点、响应状态码与头部，不保存原始 HTTP 状态行；attempt 未单独保存连接耗时。推理强度仅保存入站值，没有独立实际发送值字段。非流式 usage 保存原 usage JSON，流式 raw_usage_json 是合并后的标准化指标；原始事件在未清理的响应载荷中。 | [网关收尾](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[日志 schema](../internal/store/migrations.go) |
 | Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
+| Antigravity OAuth 集成 | 实验性实现账号导入、按需刷新、三入口文本与无签名 function 工具转换、内联图片、SSE 聚合和模型冷却。没有真实订阅账号验收；内部端点、模型权限、schema 接受范围和多轮工具线上行为均未确认。拒绝显式推理、受保护历史与签名工具调用；不实现签名缓存、浏览器授权、远程图片下载或 Responses custom/shell/apply_patch 往返。参考项目的签名占位、提示词注入和静默降级不作为本项目契约。 | [账号](../internal/antigravity/oauth.go)、[请求](../internal/protocol/antigravity_request.go)、[响应](../internal/protocol/antigravity_response.go)、[网关](../internal/gateway/antigravity.go) |
 | 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤，额外指标可能直接发送给客户端。仅写日志的要求仍是设计目标。 | [网关代理](../internal/gateway/handler.go)、[流式编码](../internal/protocol/stream_encode.go) |
 | 可信代理与退出（2、13） | 客户端 IP 解析只处理可信对端的 X-Forwarded-For，尚未支持 Forwarded。进程信号触发有期限的 HTTP Shutdown，但未把进程信号 context 直接作为所有请求 context 的取消源；不能声称信号到来立即取消所有上游。 | [IP 解析](../internal/httpx/httpx.go)、[程序入口](../cmd/model-confluence/main.go) |
 
