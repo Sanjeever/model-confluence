@@ -5,6 +5,7 @@ import { App, Button, Collapse, DatePicker, Descriptions, Empty, Form, Input, Mo
 import { CopyOutlined, DeleteOutlined, EditOutlined, PlusOutlined, UploadOutlined } from '@ant-design/icons'
 import { api, type DeleteResult, type Page, type Provider, type UpstreamKey } from '../api'
 import { providerTemplates } from '../providerTemplates'
+import OAuthLoginButton from '../components/OAuthLoginButton'
 
 type ProviderKeyForm = { id?: number; name?: string; secret?: string; expires_at?: Dayjs | null; enabled?: boolean }
 type ProviderForm = {
@@ -224,7 +225,7 @@ function OAuthAccounts({ provider }: { provider: Provider }) {
   })
   const date = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
   return <div className="space-y-3 py-3">
-    <div className="flex items-center justify-between gap-3"><span className="font-medium">OAuth 账号</span><Button icon={<UploadOutlined />} loading={uploading} onClick={() => input.current?.click()}>{isAntigravity ? '导入账号 JSON' : '上传 auth.json'}</Button><input ref={input} type="file" multiple accept=".json,application/json" style={{ display: 'none' }} aria-label="上传 OAuth 账号文件" onChange={(event) => upload(event.target.files)} /></div>
+    <div className="flex flex-wrap items-center justify-between gap-3"><span className="font-medium">OAuth 账号</span><Space wrap><OAuthLoginButton provider={provider} /><Button icon={<UploadOutlined />} loading={uploading} onClick={() => input.current?.click()}>{isAntigravity ? '导入账号 JSON' : '上传 auth.json'}</Button></Space><input ref={input} type="file" multiple accept=".json,application/json" style={{ display: 'none' }} aria-label="上传 OAuth 账号文件" onChange={(event) => upload(event.target.files)} /></div>
     {isAntigravity && <Typography.Paragraph type="secondary" className="!mb-0 text-xs">实验性接入，尚无订阅账号实测。个人订阅的第三方访问受 <a href="https://antigravity.google/terms" target="_blank" rel="noreferrer">Google 条款</a>限制。导入前需配置签发令牌的 OAuth 客户端，见<a href="https://github.com/Sanjeever/model-confluence/blob/main/docs/operations.md#antigravity-oauth" target="_blank" rel="noreferrer">接入说明</a>。</Typography.Paragraph>}
     {uploadErrors.map((item, index) => <Typography.Text key={index} type="danger" className="block">{item.name} · {item.error}</Typography.Text>)}
     <Table<UpstreamKey> size="small" rowKey="id" dataSource={provider.keys} pagination={false} scroll={{ x: 740 }} locale={{ emptyText: '暂无账号' }} expandable={{ expandedRowRender: (key) => <Descriptions size="small" column={2} items={[
@@ -235,7 +236,7 @@ function OAuthAccounts({ provider }: { provider: Provider }) {
       { key: 'recover', label: '恢复时间', children: date(key.recover_at) },
       { key: 'reason', label: '状态原因', children: key.runtime_reason ?? '—' },
     ]} /> }} columns={[
-      { title: '文件名', dataIndex: 'file_name', ellipsis: true },
+      { title: '来源', dataIndex: 'file_name', ellipsis: true },
       { title: '邮箱', width: 180, ellipsis: true, render: (_, key) => key.antigravity_identity?.email ?? key.oauth_identity?.email ?? '—' },
       { title: isAntigravity ? '项目' : '工作区', render: (_, key) => <code className="break-all text-xs">{key.antigravity_identity?.project_id ?? key.oauth_identity?.account_id ?? '—'}</code> },
       { title: '运行状态', render: (_, key) => <Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{key.runtime_status === 'auth_invalid' ? '需重新导入' : runtimeStatusName(key.runtime_status)}</Tag> },
