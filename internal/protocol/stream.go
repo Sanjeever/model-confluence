@@ -109,6 +109,9 @@ func (c *StreamConverter) Convert(input SSEEvent) (output [][]byte, semantic, do
 		return nil, false, false, err
 	}
 	for _, event := range events {
+		if c.decoder.protocol == Antigravity && c.encoder.protocol == Messages && event.Kind == streamUsage {
+			event.Usage = AntigravityAccountingUsage(event.Usage)
+		}
 		encoded, err := c.encoder.Encode(event)
 		if err != nil {
 			return nil, false, false, err

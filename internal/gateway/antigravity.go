@@ -202,6 +202,9 @@ func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, rou
 	}
 	_ = h.store.TouchUpstreamKey(route.Key.ID)
 	err = h.proxyAntigravity(w, r.Context(), response, route, inbound, requestID, attemptID, started, attemptStarted, firstByte, stream, clientWantsStreamUsage(body))
+	if errors.Is(err, errAntigravityLogging) {
+		return antigravityAttemptResult{status: 500, err: err}
+	}
 	if err == nil || errors.Is(err, errAntigravityResponseFinished) {
 		if err == nil {
 			h.candidateSucceeded(route.CandidateID, route.CandidateRevision)
@@ -247,6 +250,7 @@ func (h *Handler) antigravityFailure(route store.ResolvedRoute, failure *antigra
 }
 
 var errAntigravityResponseFinished = errors.New("Antigravity response already recorded")
+var errAntigravityLogging = errors.New("记录 Antigravity 响应失败")
 
 func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, response *http.Response, route store.ResolvedRoute, inbound, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64, stream *streamResponse, includeUsage bool) error {
 	var reader io.ReadCloser = response.Body
@@ -317,16 +321,18 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 			err = ctx.Err()
 		}
 	}
-	var usage protocol.Usage
-	var rawUsage string
+	canonical, completionErr := converter.AntigravityResponse()
+	usage, rawUsage := canonical.Usage, string(canonical.Usage.Raw)
 	var clientBody []byte
 	if err == nil {
-		var canonical protocol.Response
-		canonical, err = converter.AntigravityResponse()
+		err = completionErr
 		if err == nil {
 			usage, rawUsage = canonical.Usage, string(canonical.Usage.Raw)
 			canonical.Model = route.VirtualModel
 			if stream == nil {
+				if inbound == protocol.Messages {
+					canonical.Usage = protocol.AntigravityAccountingUsage(canonical.Usage)
+				}
 				clientBody, err = protocol.EncodeResponse(canonical, inbound)
 			}
 		}
@@ -346,7 +352,7 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 			h.finishStreamError(w, inbound, requestID, started, stream, "logging_error", logErr.Error())
 			return errAntigravityResponseFinished
 		}
-		return fmt.Errorf("记录 Antigravity 响应: %w", logErr)
+		return fmt.Errorf("%w: %v", errAntigravityLogging, logErr)
 	}
 	if status == "failed" && (stream == nil || !stream.Committed()) {
 		return err
@@ -371,7 +377,7 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 			status, message = "cancelled", writeErr.Error()
 		}
 	}
-	if logErr := h.store.CompleteRequest(requestResult(requestID, status, clientStatus, marshalHeaders(w.Header()), clientBody, firstContent, time.Since(started).Milliseconds(), message, usage)); logErr != nil {
+	if logErr := h.store.CompleteRequest(requestResult(requestID, status, clientStatus, marshalHeaders(w.Header()), clientBody, firstContent, time.Since(started).Milliseconds(), message, protocol.AntigravityAccountingUsage(usage))); logErr != nil {
 		slog.Error("record Antigravity response", "request_id", requestID, "error", logErr)
 		return errAntigravityResponseFinished
 	}

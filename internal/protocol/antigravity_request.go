@@ -299,9 +299,13 @@ func validateAntigravityInput(body []byte, source string, ignored *[]string) err
 				return err
 			}
 			if source == Chat {
-				if _, err := agObject(tool["function"], path+".function", "name description parameters strict", ignored); err != nil {
+				tool, err = agObject(tool["function"], path+".function", "name description parameters strict", ignored)
+				if err != nil {
 					return err
 				}
+			}
+			if agPresent(tool["strict"]) && string(tool["strict"]) != "true" && string(tool["strict"]) != "false" {
+				return fmt.Errorf("%s.strict 必须为布尔值", path)
 			}
 		}
 	}
@@ -315,10 +319,33 @@ func validateAntigravityInput(body []byte, source string, ignored *[]string) err
 			return err
 		}
 		if source == Chat && agPresent(object["function"]) {
-			if _, err := agObject(object["function"], "$.tool_choice.function", "name", ignored); err != nil {
+			function, err := agObject(object["function"], "$.tool_choice.function", "name", ignored)
+			if err != nil {
 				return err
 			}
+			if agString(function["name"]) == "" {
+				return fmt.Errorf("$.tool_choice.function.name 不能为空")
+			}
 		}
+		kind := agString(object["type"])
+		if source == Messages {
+			if kind != "auto" && kind != "any" && kind != "none" && kind != "tool" {
+				return fmt.Errorf("$.tool_choice.type 不受支持")
+			}
+			if kind == "tool" && agString(object["name"]) == "" {
+				return fmt.Errorf("$.tool_choice.name 不能为空")
+			}
+		} else {
+			if kind != "function" {
+				return fmt.Errorf("$.tool_choice.type 必须为 function")
+			}
+			if source == Responses && agString(object["name"]) == "" || source == Chat && !agPresent(object["function"]) {
+				return fmt.Errorf("$.tool_choice 缺少工具名称")
+			}
+		}
+	}
+	if source == Messages && len(bytes.TrimSpace(root["tool_choice"])) > 0 && bytes.TrimSpace(root["tool_choice"])[0] == '"' {
+		return fmt.Errorf("$.tool_choice 必须是对象")
 	}
 	return nil
 }
