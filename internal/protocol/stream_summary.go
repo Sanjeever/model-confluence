@@ -197,5 +197,5 @@ func looksLikeSSE(body []byte) bool {
 }
 
 func validStreamProtocol(source string) bool {
-	return source == Chat || source == Responses || source == Messages
+	return source == Chat || source == Responses || source == Messages || source == Antigravity
 }

@@ -8,6 +8,7 @@ import (
 )
 
 type streamDecoder struct {
+	antigravity   antigravityStreamState
 	protocol      string
 	started       bool
 	chatTools     map[int]string
@@ -42,6 +43,8 @@ func (d *streamDecoder) Decode(input SSEEvent) ([]streamEvent, error) {
 		return d.decodeMessages(input)
 	case Responses:
 		return d.decodeResponses(input)
+	case Antigravity:
+		return d.decodeAntigravity(input.Data)
 	default:
 		return nil, fmt.Errorf("unsupported stream protocol %q", d.protocol)
 	}

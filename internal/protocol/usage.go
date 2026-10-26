@@ -49,6 +49,14 @@ func ExtractUsage(body []byte, source string, stream bool) (Usage, string, error
 }
 
 func extractDocumentUsage(body []byte, source string) (Usage, json.RawMessage, error) {
+	if source == Antigravity {
+		document, err := decodeAntigravityDocument(body)
+		if err != nil {
+			return Usage{}, nil, err
+		}
+		usage, err := antigravityUsage(document.Usage)
+		return usage, document.Usage, err
+	}
 	var value map[string]json.RawMessage
 	if err := json.Unmarshal(body, &value); err != nil {
 		return Usage{}, nil, err

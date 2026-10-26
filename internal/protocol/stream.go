@@ -84,7 +84,7 @@ type StreamConverter struct {
 }
 
 func NewStreamConverter(from, to, virtualModel string) (*StreamConverter, error) {
-	if from != Chat && from != Responses && from != Messages {
+	if from != Chat && from != Responses && from != Messages && from != Antigravity {
 		return nil, fmt.Errorf("unsupported source stream protocol %q", from)
 	}
 	if to != Chat && to != Responses && to != Messages {
