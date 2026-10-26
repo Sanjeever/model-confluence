@@ -62,6 +62,8 @@ Codex OAuth 账号通过浏览器登录，或管理员上传原生 ChatGPT `auth
 
 两个 OAuth 供应商的浏览器登录统一使用授权码、PKCE S256 和临时回环回调。登录会话绑定发起的管理员会话及供应商，`state` 随机且只能消费一次；网络令牌交换不持有会话管理锁，最终保存与取消串行，取消或到期后不再保存。保存前重新验证管理员会话，供应商在持久化事务中检查存在与类型。登录不新增持久化会话表，也不修改用户的本地凭据；超时、取消、完成后清除临时秘密并释放端口。端口、时限及部署方式见[浏览器登录](operations.md#浏览器登录)。
 
+管理员可在原登录弹窗中提交完整回调 URL，供远程及 Docker 部署使用；管理 API 要求管理员会话和 CSRF，校验登录归属及 URL 的 scheme、host、port、path、单一 `state`、授权码和提供的 issuer。后端只解析 URL，不访问输入地址；仍向固定供应商端点发送授权码与原 PKCE verifier。手动提交与自动回调共享一次性校验和状态锁，不能重复交换或重复保存。无效 URL 的错误不回显原文；完整地址及授权码不进入日志或持久化会话。
+
 当前凭据保存在 SQLite。请求前按需提前刷新，每个账号串行执行，进入锁后重读当前凭据；刷新网络请求不持有事务，写回按凭据版本及活动、启用状态检查。刷新不改变管理员启停。确定性刷新失效持久标记 `auth_invalid`；网络故障、取消和 5xx 不永久淘汰账号。已过期 access token 仍可通过刷新使用。刷新与旧模型调用的状态回写均不能覆盖新配置或已删除账号。
 
 删除清空当前 OAuth 凭据并归档账号，保留身份和日志引用。删除不撤销上游会话、不删除用户本地源文件；既有历史载荷仍按保留策略存储，可能包含旧 access token。永久鉴权失效需删除旧账号，再浏览器登录或重新导入，状态重置不能修复。
@@ -501,7 +503,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 | 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志存储协议、端点、响应状态码与头部，不保存原始 HTTP 状态行；attempt 未单独保存连接耗时。推理强度仅保存入站值，没有独立实际发送值字段。非流式 usage 保存原 usage JSON，流式 raw_usage_json 是合并后的标准化指标；原始事件在未清理的响应载荷中。 | [网关收尾](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[日志 schema](../internal/store/migrations.go) |
 | Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
 | Antigravity OAuth 集成 | 实验性实现浏览器登录、账号导入、按需刷新、三入口文本与无签名 function 工具转换、内联图片、SSE 聚合和模型冷却。没有真实订阅账号验收；OAuth 客户端权限、内部端点、模型权限、schema 接受范围和多轮工具线上行为均未确认。拒绝显式推理、受保护历史与签名工具调用；不实现签名缓存、远程图片下载或 Responses custom/shell/apply_patch 往返。参考项目的签名占位、提示词注入和静默降级不作为本项目契约。 | [账号](../internal/antigravity/oauth.go)、[登录](../internal/antigravity/login.go)、[请求](../internal/protocol/antigravity_request.go)、[响应](../internal/protocol/antigravity_response.go)、[网关](../internal/gateway/antigravity.go) |
-| 浏览器 OAuth 登录 | 两种供应商的授权链接、PKCE、回调、令牌交换与账号落库已覆盖本地 mock；单次回调、会话隔离、取消、超时和保存失败已验证。未使用真实账号完成浏览器授权验收；不支持设备码、公网回调和原位重新登录。回环监听位于进程网络命名空间，不能将普通 Docker 端口发布当作远程回调方案。 | [登录会话](../internal/oauthlogin/login.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[运行说明](operations.md#浏览器登录) |
+| 浏览器 OAuth 登录 | 两种供应商支持自动回调与完整 URL 手动提交，授权链接、PKCE、令牌交换与落库已覆盖本地 mock；单次处理、会话隔离、取消、超时和保存失败已验证。Antigravity 曾在 sg1 通过 SSH 补送一次真实授权回调并成功保存账号，只证明该次登录与身份、项目发现成功，不代表模型权限或所有客户端兼容。新的 URL 回填入口仍需真实授权操作验收；不支持设备码、公网自动回调和原位重新登录。回环监听位于进程网络命名空间，普通 Docker 端口发布不能作为自动回调通道。 | [登录会话](../internal/oauthlogin/login.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[运行说明](operations.md#浏览器登录) |
 | 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤，额外指标可能直接发送给客户端。仅写日志的要求仍是设计目标。 | [网关代理](../internal/gateway/handler.go)、[流式编码](../internal/protocol/stream_encode.go) |
 | 可信代理与退出（2、13） | 客户端 IP 解析只处理可信对端的 X-Forwarded-For，尚未支持 Forwarded。进程信号触发有期限的 HTTP Shutdown，但未把进程信号 context 直接作为所有请求 context 的取消源；不能声称信号到来立即取消所有上游。 | [IP 解析](../internal/httpx/httpx.go)、[程序入口](../cmd/model-confluence/main.go) |
 
