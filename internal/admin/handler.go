@@ -13,6 +13,7 @@ import (
 
 	"github.com/Sanjeever/model-confluence/internal/gateway"
 	"github.com/Sanjeever/model-confluence/internal/httpx"
+	"github.com/Sanjeever/model-confluence/internal/oauthlogin"
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 	"github.com/Sanjeever/model-confluence/internal/store"
 )
@@ -27,6 +28,7 @@ type Handler struct {
 	clientIP *httpx.ClientIPResolver
 	limiter  *loginLimiter
 	tester   upstreamTester
+	logins   *oauthlogin.Manager
 }
 
 type upstreamTester interface {
@@ -35,7 +37,7 @@ type upstreamTester interface {
 }
 
 func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver, tester upstreamTester) *Handler {
-	return &Handler{store: store, clientIP: clientIP, limiter: newLoginLimiter(), tester: tester}
+	return &Handler{store: store, clientIP: clientIP, limiter: newLoginLimiter(), tester: tester, logins: oauthlogin.NewManager()}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -50,6 +52,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PATCH /api/admin/upstream-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { h.updateEnabled(w, r, h.store.SetUpstreamKeyEnabled) }))))
 	mux.Handle("POST /api/admin/providers/{id}/auth-files", h.requireSession(h.requireCSRF(http.HandlerFunc(h.uploadAuthFile))))
 	mux.Handle("DELETE /api/admin/providers/{id}/auth-files/{key_id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteAuthFile))))
+	mux.Handle("POST /api/admin/providers/{id}/logins", h.requireSession(h.requireCSRF(http.HandlerFunc(h.startProviderLogin))))
+	mux.Handle("GET /api/admin/providers/{id}/logins/{login_id}", h.requireSession(http.HandlerFunc(h.providerLoginStatus)))
+	mux.Handle("DELETE /api/admin/providers/{id}/logins/{login_id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.cancelProviderLogin))))
 	mux.Handle("GET /api/admin/costs", h.requireSession(http.HandlerFunc(h.costs)))
 	mux.Handle("GET /api/admin/model-names", h.requireSession(http.HandlerFunc(h.modelNames)))
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))
@@ -117,6 +122,7 @@ func (h *Handler) session(w http.ResponseWriter, _ *http.Request) {
 func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 	cookie, _ := r.Cookie(sessionCookie)
 	if cookie != nil {
+		h.logins.CancelOwner(cookie.Value)
 		_ = h.store.DeleteSession(cookie.Value)
 	}
 	h.clearCookie(w, sessionCookie, true)
@@ -140,6 +146,7 @@ func (h *Handler) changePassword(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusUnauthorized, map[string]string{"error": "当前密码错误"})
 		return
 	}
+	h.logins.CancelOwner("")
 	if err := h.store.ResetAdminPassword(input.NewPassword); err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": "无法修改密码"})
 		return
