@@ -90,3 +90,31 @@ func (h *Handler) cancelProviderLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
+
+func (h *Handler) submitProviderLogin(w http.ResponseWriter, r *http.Request) {
+	providerID, ok := loginProviderID(w, r)
+	if !ok {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	var input struct {
+		URL string `json:"url"`
+	}
+	if !httpx.DecodeJSON(w, r, &input) {
+		return
+	}
+	cookie, _ := r.Cookie(sessionCookie)
+	status, err := h.logins.Submit(cookie.Value, providerID, r.PathValue("login_id"), input.URL)
+	if err != nil {
+		code := http.StatusBadRequest
+		if errors.Is(err, oauthlogin.ErrNotFound) {
+			code = http.StatusNotFound
+		}
+		if errors.Is(err, oauthlogin.ErrAlreadyHandled) {
+			code = http.StatusConflict
+		}
+		httpx.WriteJSON(w, code, map[string]string{"error": err.Error()})
+		return
+	}
+	httpx.WriteJSON(w, http.StatusAccepted, status)
+}

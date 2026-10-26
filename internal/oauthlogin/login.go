@@ -11,6 +11,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"time"
 )
@@ -18,12 +19,17 @@ import (
 const Lifetime = 5 * time.Minute
 
 var ErrBusy = errors.New("已有待完成的登录，请先完成或取消")
+var ErrNotFound = errors.New("登录会话不存在或已清理")
+var ErrAlreadyHandled = errors.New("登录已处理或过期，请重新发起登录")
+var ErrInvalidCallback = errors.New("回调 URL 无效或与本次登录的回调地址不匹配")
+var ErrStateMismatch = errors.New("登录状态不匹配，请提交本次授权完成后的完整回调 URL")
 
 // Exchange 只执行网络操作；返回的保存操作在取消、超时检查后串行执行。
 type Exchange func(ctx context.Context, code, verifier, redirect string) (func() (int64, error), error)
 
 type Config struct {
 	Redirect  string
+	Issuer    string
 	Authorize func(state, challenge, redirect string) string
 	Exchange  Exchange
 }
@@ -49,6 +55,7 @@ type flow struct {
 	cancel   context.CancelFunc
 	server   *http.Server
 	listener net.Listener
+	issuer   string
 }
 
 type Manager struct {
@@ -101,7 +108,7 @@ func (m *Manager) Start(owner string, providerID int64, config Config) (Status, 
 	redirect.Host = listener.Addr().String()
 	ctx, cancel := context.WithTimeout(context.Background(), Lifetime)
 	challenge := sha256.Sum256([]byte(verifier))
-	f := &flow{Status: Status{ID: id, ProviderID: providerID, URL: config.Authorize(state, base64.RawURLEncoding.EncodeToString(challenge[:]), redirect.String()), Redirect: redirect.String(), ExpiresAt: time.Now().UTC().Add(Lifetime), Status: "pending"}, owner: owner, state: state, verifier: verifier, exchange: config.Exchange, ctx: ctx, cancel: cancel, listener: listener}
+	f := &flow{Status: Status{ID: id, ProviderID: providerID, URL: config.Authorize(state, base64.RawURLEncoding.EncodeToString(challenge[:]), redirect.String()), Redirect: redirect.String(), ExpiresAt: time.Now().UTC().Add(Lifetime), Status: "pending"}, owner: owner, state: state, verifier: verifier, exchange: config.Exchange, ctx: ctx, cancel: cancel, listener: listener, issuer: config.Issuer}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET "+redirect.Path, func(w http.ResponseWriter, r *http.Request) { m.callback(f, w, r) })
 	f.server = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
@@ -145,34 +152,91 @@ func (m *Manager) callback(f *flow, w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Referrer-Policy", "no-referrer")
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	query, err := url.ParseQuery(r.URL.RawQuery)
+	if err != nil {
+		http.Error(w, ErrInvalidCallback.Error(), 400)
+		return
+	}
 	m.mu.Lock()
-	if err != nil || len(query["state"]) != 1 || subtle.ConstantTimeCompare([]byte(query.Get("state")), []byte(f.state)) != 1 || f.state == "" {
-		m.mu.Unlock()
-		http.Error(w, "登录状态不匹配", 400)
+	complete, err := m.acceptLocked(f, query)
+	m.mu.Unlock()
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrAlreadyHandled) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
 		return
 	}
-	if f.Status.Status != "pending" || f.ctx.Err() != nil {
-		m.mu.Unlock()
-		http.Error(w, "登录已处理或过期", 409)
-		return
-	}
-	if query.Get("error") != "" {
-		// 只显示固定错误，不把授权服务的任意回调内容写入日志或页面。
-		m.finishLocked(f, "failed", "授权未完成，请重新登录", 0)
-		m.mu.Unlock()
+	if complete == nil {
 		_, _ = w.Write([]byte("授权未完成，请返回模汇。"))
 		return
 	}
-	if len(query["code"]) != 1 || query.Get("code") == "" {
-		m.mu.Unlock()
-		http.Error(w, "缺少有效授权码", 400)
-		return
+	_, _ = w.Write([]byte("授权回调已收到，请返回模汇查看登录结果。"))
+	go complete()
+}
+
+// Submit 只解析地址中的授权结果，不向该地址发起 HTTP 请求。
+func (m *Manager) Submit(owner string, providerID int64, id, callbackURL string) (Status, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	f, ok := m.flows[id]
+	if !ok || f.owner != owner || f.ProviderID != providerID || time.Now().After(f.ExpiresAt.Add(time.Minute)) {
+		return Status{}, ErrNotFound
+	}
+	callbackURL = strings.TrimSpace(callbackURL)
+	if len(callbackURL) > 16<<10 {
+		return Status{}, ErrInvalidCallback
+	}
+	parsed, err := url.Parse(callbackURL)
+	if err != nil {
+		return Status{}, ErrInvalidCallback
+	}
+	expected, err := url.Parse(f.Redirect)
+	if err != nil || parsed.Scheme != expected.Scheme || parsed.Host != expected.Host || parsed.Path != expected.Path || parsed.User != nil || parsed.Fragment != "" || parsed.Opaque != "" {
+		return Status{}, ErrInvalidCallback
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return Status{}, ErrInvalidCallback
+	}
+	complete, err := m.acceptLocked(f, query)
+	if err != nil {
+		return Status{}, err
+	}
+	status := f.Status
+	if complete != nil {
+		go complete()
+	}
+	return status, nil
+}
+
+// 调用方持有会话锁，使自动回调和手动提交只能有一次进入令牌交换。
+func (m *Manager) acceptLocked(f *flow, query url.Values) (func(), error) {
+	if f.Status.Status != "pending" || f.ctx.Err() != nil {
+		return nil, ErrAlreadyHandled
+	}
+	if len(query["state"]) != 1 || f.state == "" || subtle.ConstantTimeCompare([]byte(query.Get("state")), []byte(f.state)) != 1 {
+		return nil, ErrStateMismatch
+	}
+	if len(query["iss"]) > 1 || len(query["error"]) > 1 || len(query["code"]) > 1 {
+		return nil, ErrInvalidCallback
+	}
+	if issuer := query.Get("iss"); issuer != "" && (f.issuer == "" || issuer != f.issuer) {
+		return nil, errors.New("授权服务 issuer 与本次登录不匹配")
+	}
+	if query.Get("error") != "" {
+		if query.Get("code") != "" {
+			return nil, ErrInvalidCallback
+		}
+		m.finishLocked(f, "failed", "授权未完成，请重新登录", 0)
+		return nil, nil
+	}
+	if query.Get("code") == "" {
+		return nil, errors.New("回调 URL 缺少授权码")
 	}
 	f.Status.Status = "exchanging"
-	exchange, verifier, redirect := f.exchange, f.verifier, f.Redirect
-	m.mu.Unlock()
-	_, _ = w.Write([]byte("授权回调已收到，请返回模汇查看登录结果。"))
-	go m.complete(f, exchange, query.Get("code"), verifier, redirect)
+	exchange, verifier, redirect, code := f.exchange, f.verifier, f.Redirect, query.Get("code")
+	return func() { m.complete(f, exchange, code, verifier, redirect) }, nil
 }
 
 func (m *Manager) complete(f *flow, exchange Exchange, code, verifier, redirect string) {

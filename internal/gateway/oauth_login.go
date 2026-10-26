@@ -17,7 +17,7 @@ func (h *Handler) OAuthLogin(providerID int64) (oauthlogin.Config, error) {
 	}
 	switch provider.Kind {
 	case store.ProviderCodexOAuth:
-		return oauthlogin.Config{Redirect: codex.LoginRedirect, Authorize: codex.AuthorizationURL, Exchange: func(ctx context.Context, code, verifier, redirect string) (func() (int64, error), error) {
+		return oauthlogin.Config{Redirect: codex.LoginRedirect, Issuer: "https://auth.openai.com", Authorize: codex.AuthorizationURL, Exchange: func(ctx context.Context, code, verifier, redirect string) (func() (int64, error), error) {
 			data, err := codex.ExchangeLogin(ctx, h.client, code, verifier, redirect)
 			if err != nil {
 				return nil, err
@@ -31,7 +31,7 @@ func (h *Handler) OAuthLogin(providerID int64) (oauthlogin.Config, error) {
 		if h.antigravityOAuth.ID == "" || h.antigravityOAuth.Secret == "" {
 			return oauthlogin.Config{}, errors.New("请配置 MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_ID 和 MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_SECRET")
 		}
-		return oauthlogin.Config{Redirect: antigravity.LoginRedirect, Authorize: h.antigravityOAuth.AuthorizationURL, Exchange: func(ctx context.Context, code, verifier, redirect string) (func() (int64, error), error) {
+		return oauthlogin.Config{Redirect: antigravity.LoginRedirect, Issuer: "https://accounts.google.com", Authorize: h.antigravityOAuth.AuthorizationURL, Exchange: func(ctx context.Context, code, verifier, redirect string) (func() (int64, error), error) {
 			credential, err := antigravity.ExchangeLogin(ctx, h.client, h.antigravityOAuth, code, verifier, redirect)
 			if err != nil {
 				return nil, err

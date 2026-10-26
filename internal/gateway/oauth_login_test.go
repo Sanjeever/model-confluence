@@ -84,12 +84,19 @@ func TestBrowserOAuthAccountCreation(t *testing.T) {
 			if u.Query().Get("redirect_uri") != login.Redirect || u.Query().Get("code_challenge_method") != "S256" {
 				t.Fatal("invalid authorization URL")
 			}
-			response, err := http.Get(login.Redirect + "?" + url.Values{"code": {"login-code"}, "state": {u.Query().Get("state")}}.Encode())
-			if err != nil {
-				t.Fatal(err)
+			callback := login.Redirect + "?" + url.Values{"code": {"login-code"}, "state": {u.Query().Get("state")}, "iss": {config.Issuer}}.Encode()
+			if kind == store.ProviderAntigravityOAuth {
+				if _, err := manager.Submit("owner", provider.ID, login.ID, callback); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				response, err := http.Get(callback)
+				if err != nil {
+					t.Fatal(err)
+				}
+				io.Copy(io.Discard, response.Body)
+				response.Body.Close()
 			}
-			io.Copy(io.Discard, response.Body)
-			response.Body.Close()
 			deadline := time.Now().Add(2 * time.Second)
 			for {
 				status, _ := manager.Get("owner", provider.ID, login.ID)

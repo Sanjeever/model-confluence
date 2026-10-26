@@ -55,6 +55,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/admin/providers/{id}/logins", h.requireSession(h.requireCSRF(http.HandlerFunc(h.startProviderLogin))))
 	mux.Handle("GET /api/admin/providers/{id}/logins/{login_id}", h.requireSession(http.HandlerFunc(h.providerLoginStatus)))
 	mux.Handle("DELETE /api/admin/providers/{id}/logins/{login_id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.cancelProviderLogin))))
+	mux.Handle("POST /api/admin/providers/{id}/logins/{login_id}/callback", h.requireSession(h.requireCSRF(http.HandlerFunc(h.submitProviderLogin))))
 	mux.Handle("GET /api/admin/costs", h.requireSession(http.HandlerFunc(h.costs)))
 	mux.Handle("GET /api/admin/model-names", h.requireSession(http.HandlerFunc(h.modelNames)))
 	mux.Handle("GET /api/admin/requests", h.requireSession(http.HandlerFunc(h.listRequests)))

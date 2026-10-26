@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -116,5 +118,94 @@ func TestLoginLifecycle(t *testing.T) {
 				t.Fatal("cancelled login saved or code exchanged twice")
 			}
 		})
+	}
+}
+
+func TestManualCallbackValidationAndSingleExchange(t *testing.T) {
+	m := NewManager()
+	defer m.CancelOwner("")
+	started, release := make(chan struct{}), make(chan struct{})
+	var exchanges atomic.Int32
+	login, err := m.Start("owner", 7, Config{
+		Redirect: "http://127.0.0.1:0/callback", Issuer: "https://accounts.google.com",
+		Authorize: func(state, challenge, redirect string) string {
+			return "https://example.com/?" + url.Values{"state": {state}}.Encode()
+		},
+		Exchange: func(ctx context.Context, code, verifier, redirect string) (func() (int64, error), error) {
+			if exchanges.Add(1) == 1 {
+				close(started)
+			}
+			if code != "test-code" {
+				t.Error("incorrect authorization code")
+			}
+			<-release
+			return func() (int64, error) { return 9, nil }, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer close(release)
+	authorize, _ := url.Parse(login.URL)
+	query := url.Values{"state": {authorize.Query().Get("state")}, "code": {"test-code"}, "iss": {"https://accounts.google.com"}}
+	callback := login.Redirect + "?" + query.Encode()
+	if _, err := m.Submit("other-owner", 7, login.ID, callback); !errors.Is(err, ErrNotFound) {
+		t.Fatal("cross-owner submission accepted")
+	}
+	if _, err := m.Submit("owner", 8, login.ID, callback); !errors.Is(err, ErrNotFound) {
+		t.Fatal("cross-provider submission accepted")
+	}
+	wrongState := url.Values{"state": {"wrong-state"}, "code": {"test-code"}}
+	for _, invalid := range []string{
+		"http://example.com/callback?" + query.Encode(),
+		strings.Replace(callback, "http://", "https://", 1),
+		strings.Replace(callback, "/callback?", "/other?", 1),
+		login.Redirect + "?" + wrongState.Encode(),
+		callback + "&code=another-code",
+		callback + "&state=another-state",
+		callback + "&error=access_denied",
+		callback + "#fragment",
+		login.Redirect + "?state=%xx&code=test-code",
+		strings.Replace(callback, url.QueryEscape("https://accounts.google.com"), url.QueryEscape("https://example.com"), 1),
+	} {
+		if _, err := m.Submit("owner", 7, login.ID, invalid); err == nil || strings.Contains(err.Error(), "test-code") {
+			t.Fatalf("invalid callback accepted or echoed: %v", err)
+		}
+	}
+	if exchanges.Load() != 0 {
+		t.Fatal("invalid callback started an exchange")
+	}
+	var group sync.WaitGroup
+	group.Add(2)
+	go func() {
+		defer group.Done()
+		_, err := m.Submit("owner", 7, login.ID, callback)
+		if err != nil && !errors.Is(err, ErrAlreadyHandled) {
+			t.Error(err)
+		}
+	}()
+	go func() {
+		defer group.Done()
+		response, err := http.Get(callback)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		response.Body.Close()
+		if response.StatusCode != 200 && response.StatusCode != 409 {
+			t.Errorf("automatic callback returned %d", response.StatusCode)
+		}
+	}()
+	group.Wait()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("exchange not started")
+	}
+	if exchanges.Load() != 1 {
+		t.Fatal("callback exchanged more than once")
+	}
+	if _, err := m.Submit("owner", 7, login.ID, callback); !errors.Is(err, ErrAlreadyHandled) {
+		t.Fatal("callback replay accepted")
 	}
 }
