@@ -159,7 +159,7 @@ function UpstreamModelField({ value, onChange, providerID, kind }: { value?: str
   const models = useQuery({
     queryKey: ['provider-models', providerID],
     queryFn: () => api<{ models: string[] }>(`/api/admin/providers/${providerID}/models`),
-    enabled: providerID != null && kind === 'generic',
+    enabled: providerID != null && (kind === 'generic' || kind === 'antigravity_oauth'),
     staleTime: Infinity,
     retry: false,
   })
@@ -169,9 +169,9 @@ function UpstreamModelField({ value, onChange, providerID, kind }: { value?: str
       <AutoComplete value={value} onChange={onChange} className="min-w-0 flex-1" options={(models.data?.models ?? []).map((id) => ({ value: id }))}>
         <Input className="font-mono" placeholder={providerID == null ? '请先选择供应商' : '从列表选择或手动输入'} />
       </AutoComplete>
-      <Tooltip title="从供应商拉取模型列表"><Button icon={<SyncOutlined spin={models.isFetching} />} aria-label="拉取模型列表" onClick={() => models.refetch()} /></Tooltip>
+      <Tooltip title="从供应商拉取模型列表"><Button icon={<SyncOutlined spin={models.isFetching} />} aria-label="拉取模型列表" disabled={providerID == null || models.isFetching} onClick={() => models.refetch()}>拉取模型</Button></Tooltip>
     </div>
-    {models.isError && <Typography.Text type="danger" className="mt-1 block text-xs">模型列表拉取失败，可手动输入真实模型名</Typography.Text>}
+    {models.isError && <Typography.Text type="danger" className="mt-1 block text-xs">模型列表拉取失败：{models.error.message}</Typography.Text>}
   </div>
 }
 
