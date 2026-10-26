@@ -80,6 +80,22 @@ CREATE TABLE IF NOT EXISTS upstream_keys (
     UNIQUE(provider_id, position)
 );
 
+CREATE TABLE IF NOT EXISTS antigravity_credentials (
+    upstream_key_id INTEGER PRIMARY KEY REFERENCES upstream_keys(id) ON DELETE CASCADE,
+    subject TEXT NOT NULL UNIQUE,
+    identity_json TEXT NOT NULL,
+    credential_json TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS antigravity_model_states (
+    upstream_key_id INTEGER NOT NULL REFERENCES upstream_keys(id) ON DELETE CASCADE,
+    upstream_model TEXT NOT NULL,
+    credential_revision INTEGER NOT NULL,
+    reason TEXT NOT NULL,
+    recover_at TEXT NOT NULL,
+    PRIMARY KEY (upstream_key_id, upstream_model)
+);
+
 CREATE TABLE IF NOT EXISTS virtual_models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,

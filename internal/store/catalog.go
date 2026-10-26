@@ -8,13 +8,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Sanjeever/model-confluence/internal/antigravity"
 	"github.com/Sanjeever/model-confluence/internal/codex"
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 )
 
 const (
-	ProviderGeneric    = "generic"
-	ProviderCodexOAuth = "codex_oauth"
+	ProviderGeneric          = "generic"
+	ProviderCodexOAuth       = "codex_oauth"
+	ProviderAntigravityOAuth = "antigravity_oauth"
 )
 
 var ErrProviderInUse = errors.New("provider is used by model routes")
@@ -49,22 +51,23 @@ type ProviderOption struct {
 }
 
 type UpstreamKey struct {
-	FileName             string          `json:"file_name,omitempty"`
-	OAuthIdentity        *codex.Identity `json:"oauth_identity,omitempty"`
-	AccessTokenExpiresAt *time.Time      `json:"access_token_expires_at,omitempty"`
-	LastRefresh          *time.Time      `json:"last_refresh,omitempty"`
-	CredentialRevision   int64           `json:"-"`
-	ID                   int64           `json:"id"`
-	Name                 string          `json:"name"`
-	Secret               string          `json:"secret,omitempty"`
-	SecretHint           string          `json:"secret_hint"`
-	Position             int             `json:"position"`
-	Enabled              bool            `json:"enabled"`
-	ExpiresAt            *time.Time      `json:"expires_at"`
-	RuntimeStatus        string          `json:"runtime_status"`
-	RuntimeReason        string          `json:"runtime_reason,omitempty"`
-	RecoverAt            *time.Time      `json:"recover_at"`
-	LastUsedAt           *time.Time      `json:"last_used_at"`
+	AntigravityIdentity  *antigravity.Identity `json:"antigravity_identity,omitempty"`
+	FileName             string                `json:"file_name,omitempty"`
+	OAuthIdentity        *codex.Identity       `json:"oauth_identity,omitempty"`
+	AccessTokenExpiresAt *time.Time            `json:"access_token_expires_at,omitempty"`
+	LastRefresh          *time.Time            `json:"last_refresh,omitempty"`
+	CredentialRevision   int64                 `json:"-"`
+	ID                   int64                 `json:"id"`
+	Name                 string                `json:"name"`
+	Secret               string                `json:"secret,omitempty"`
+	SecretHint           string                `json:"secret_hint"`
+	Position             int                   `json:"position"`
+	Enabled              bool                  `json:"enabled"`
+	ExpiresAt            *time.Time            `json:"expires_at"`
+	RuntimeStatus        string                `json:"runtime_status"`
+	RuntimeReason        string                `json:"runtime_reason,omitempty"`
+	RecoverAt            *time.Time            `json:"recover_at"`
+	LastUsedAt           *time.Time            `json:"last_used_at"`
 }
 
 type CreateProviderInput struct {
@@ -254,7 +257,7 @@ func (s *Store) hydrateProviders(providers []Provider, includeSecrets bool) erro
 		return err
 	}
 	endpointRows.Close()
-	keyRows, err := s.db.Query(`SELECT provider_id, id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at, auth_json, file_name, access_token_expires_at, credential_revision FROM upstream_keys WHERE provider_id IN (`+placeholders+`) AND archived_at IS NULL ORDER BY provider_id, position`, args...)
+	keyRows, err := s.db.Query(`SELECT provider_id, id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at, auth_json, file_name, access_token_expires_at, credential_revision, (SELECT identity_json FROM antigravity_credentials c WHERE c.upstream_key_id = upstream_keys.id) FROM upstream_keys WHERE provider_id IN (`+placeholders+`) AND archived_at IS NULL ORDER BY provider_id, position`, args...)
 	if err != nil {
 		return err
 	}
@@ -411,7 +414,7 @@ func (s *Store) UpdateProvider(id int64, input CreateProviderInput) error {
 			return err
 		}
 	}
-	if kind == ProviderCodexOAuth {
+	if kind == ProviderCodexOAuth || kind == ProviderAntigravityOAuth {
 		if _, err := tx.Exec(`UPDATE upstream_keys SET credential_revision = credential_revision + 1 WHERE provider_id = ? AND archived_at IS NULL`, id); err != nil {
 			return err
 		}
@@ -515,6 +518,9 @@ func (s *Store) DeleteProvider(id int64) (DeleteResult, error) {
 	}
 	now := formatTime(time.Now())
 	result := DeleteResult{Archived: allCandidates > 0 || attempts > 0}
+	if _, err := tx.Exec(`DELETE FROM antigravity_credentials WHERE upstream_key_id IN (SELECT id FROM upstream_keys WHERE provider_id = ?)`, id); err != nil {
+		return DeleteResult{}, err
+	}
 	if result.Archived {
 		if _, err := tx.Exec(`UPDATE providers SET enabled = 0, archived_at = ?, updated_at = ? WHERE id = ?`, now, now, id); err != nil {
 			return DeleteResult{}, err
@@ -575,7 +581,7 @@ func (s *Store) providerEndpoints(providerID int64) (map[string]string, error) {
 }
 
 func (s *Store) providerKeys(providerID int64, includeSecret bool) ([]UpstreamKey, error) {
-	rows, err := s.db.Query(`SELECT id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at, auth_json, file_name, access_token_expires_at, credential_revision FROM upstream_keys WHERE provider_id = ? AND archived_at IS NULL ORDER BY position`, providerID)
+	rows, err := s.db.Query(`SELECT id, COALESCE(name, ''), secret, position, enabled, expires_at, runtime_status, COALESCE(runtime_reason, ''), recover_at, last_used_at, auth_json, file_name, access_token_expires_at, credential_revision, (SELECT identity_json FROM antigravity_credentials c WHERE c.upstream_key_id = upstream_keys.id) FROM upstream_keys WHERE provider_id = ? AND archived_at IS NULL ORDER BY position`, providerID)
 	if err != nil {
 		return nil, err
 	}
@@ -595,7 +601,8 @@ func scanUpstreamKey(row rowScanner, providerID *int64, includeSecret bool) (Ups
 	var key UpstreamKey
 	var expiresAt, recoverAt, lastUsedAt, accessExpiresAt sql.NullString
 	var authJSON string
-	destinations := []any{&key.ID, &key.Name, &key.Secret, &key.Position, &key.Enabled, &expiresAt, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &lastUsedAt, &authJSON, &key.FileName, &accessExpiresAt, &key.CredentialRevision}
+	var antigravityJSON sql.NullString
+	destinations := []any{&key.ID, &key.Name, &key.Secret, &key.Position, &key.Enabled, &expiresAt, &key.RuntimeStatus, &key.RuntimeReason, &recoverAt, &lastUsedAt, &authJSON, &key.FileName, &accessExpiresAt, &key.CredentialRevision, &antigravityJSON}
 	if providerID != nil {
 		destinations = append([]any{providerID}, destinations...)
 	}
@@ -609,6 +616,17 @@ func scanUpstreamKey(row rowScanner, providerID *int64, includeSecret bool) (Ups
 		}
 		key.OAuthIdentity = &auth.Identity
 		key.LastRefresh = auth.LastRefresh
+	}
+	if antigravityJSON.Valid {
+		var metadata struct {
+			antigravity.Identity
+			LastRefresh *time.Time `json:"last_refresh"`
+		}
+		if err := json.Unmarshal([]byte(antigravityJSON.String), &metadata); err != nil {
+			return UpstreamKey{}, err
+		}
+		key.AntigravityIdentity = &metadata.Identity
+		key.LastRefresh = metadata.LastRefresh
 	}
 	var err error
 	key.AccessTokenExpiresAt, err = parseNullableTime(accessExpiresAt)
@@ -1131,6 +1149,17 @@ func normalizeProvider(input *CreateProviderInput) error {
 	}
 	switch input.Kind {
 	case ProviderGeneric:
+	case ProviderAntigravityOAuth:
+		if len(input.Keys) > 0 || len(input.StaticHeaders) > 0 || input.AuthHeader != "" || input.AuthType != "" && input.AuthType != "oauth" || len(input.QuotaCodes) > 0 {
+			return fmt.Errorf("Antigravity OAuth 不接受静态鉴权、密钥或额度错误码编辑")
+		}
+		if len(input.Endpoints) > 0 && (len(input.Endpoints) != 1 || input.Endpoints[protocol.Antigravity] != antigravity.StreamEndpoint) {
+			return fmt.Errorf("Antigravity OAuth 端点固定")
+		}
+		input.AuthType = "oauth"
+		input.StaticHeaders = map[string]string{}
+		input.QuotaCodes = []string{}
+		input.Endpoints = map[string]string{protocol.Antigravity: antigravity.StreamEndpoint}
 	case ProviderCodexOAuth:
 		if len(input.Keys) > 0 || len(input.StaticHeaders) > 0 || input.AuthHeader != "" || input.AuthType != "" && input.AuthType != "oauth" {
 			return fmt.Errorf("Codex OAuth 不接受静态鉴权或密钥编辑")

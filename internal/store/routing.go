@@ -6,6 +6,8 @@ import (
 	"errors"
 	"sort"
 	"time"
+
+	"github.com/Sanjeever/model-confluence/internal/protocol"
 )
 
 var ErrNoRoute = errors.New("no eligible route")
@@ -39,6 +41,15 @@ func (s *Store) ResolveRoutes(requirements RoutingRequirements) ([]ResolvedRoute
 	}
 	routes := make([]ResolvedRoute, 0, len(templates))
 	for _, route := range templates {
+		if route.UpstreamProtocol == protocol.Antigravity {
+			available, err := s.antigravityModelAvailable(route.Key.ID, route.Key.CredentialRevision, route.UpstreamModel)
+			if err != nil {
+				return nil, err
+			}
+			if !available {
+				continue
+			}
+		}
 		if KeyAvailable(route.Key) {
 			routes = append(routes, route)
 		}
@@ -202,7 +213,7 @@ func (s *Store) MarkUpstreamKey(id int64, status, reason string, recoverAt *time
 
 // ResetUpstreamKeyRuntime 清除上游密钥的运行状态，不改变管理员启用状态或密钥原文。
 func (s *Store) ResetUpstreamKeyRuntime(id int64) error {
-	result, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, credential_revision = credential_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NULL AND NOT (auth_json != '' AND runtime_status = 'auth_invalid')`, formatTime(time.Now()), id)
+	result, err := s.db.Exec(`UPDATE upstream_keys SET runtime_status = 'available', runtime_reason = NULL, recover_at = NULL, credential_revision = credential_revision + 1, updated_at = ? WHERE id = ? AND archived_at IS NULL AND NOT ((auth_json != '' OR EXISTS (SELECT 1 FROM antigravity_credentials c WHERE c.upstream_key_id = upstream_keys.id)) AND runtime_status = 'auth_invalid')`, formatTime(time.Now()), id)
 	if err != nil {
 		return err
 	}

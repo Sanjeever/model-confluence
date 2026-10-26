@@ -151,8 +151,14 @@ func (s *Store) DeleteOAuthCredential(providerID, id int64) error {
 	if err := tx.QueryRow(`SELECT p.kind FROM upstream_keys k JOIN providers p ON p.id = k.provider_id WHERE k.id = ? AND k.provider_id = ? AND k.archived_at IS NULL AND p.archived_at IS NULL`, id, providerID).Scan(&kind); err != nil {
 		return err
 	}
-	if kind != ProviderCodexOAuth {
+	if kind != ProviderCodexOAuth && kind != ProviderAntigravityOAuth {
 		return fmt.Errorf("供应商不支持 OAuth 文件")
+	}
+	if _, err := tx.Exec(`DELETE FROM antigravity_credentials WHERE upstream_key_id = ?`, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM antigravity_model_states WHERE upstream_key_id = ?`, id); err != nil {
+		return err
 	}
 	// 归档保留日志引用；当前凭据立即清空，身份索引释放。
 	now := formatTime(time.Now())

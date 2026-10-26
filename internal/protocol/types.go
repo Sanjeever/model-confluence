@@ -3,9 +3,10 @@ package protocol
 import "encoding/json"
 
 const (
-	Chat      = "chat_completions"
-	Responses = "responses"
-	Messages  = "messages"
+	Chat        = "chat_completions"
+	Responses   = "responses"
+	Messages    = "messages"
+	Antigravity = "antigravity"
 )
 
 type Request struct {
