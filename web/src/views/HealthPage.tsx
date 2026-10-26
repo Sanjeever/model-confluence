@@ -59,13 +59,25 @@ export default function HealthPage() {
             { title: '密钥 / 账号', width: 200, render: (_, record) => <span className="min-w-0 break-all">{record.name || `密钥 ${record.position + 1}`}</span> },
             { title: '状态', width: 120, render: (_, record) => <KeyStatusTag record={record} /> },
             { title: '恢复时间', dataIndex: 'recover_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
-            { title: '到期时间', width: 170, render: (_, record) => record.provider_kind === 'codex_oauth' ? <span className="text-xs">访问令牌<br />{record.access_token_expires_at ? new Date(record.access_token_expires_at).toLocaleString() : '—'}</span> : record.expires_at ? <span className="font-mono text-xs">{new Date(record.expires_at).toLocaleString()}</span> : '—' },
+            { title: '到期时间', width: 170, render: (_, record) => record.provider_kind !== 'generic' ? <span className="text-xs">访问令牌<br />{record.access_token_expires_at ? new Date(record.access_token_expires_at).toLocaleString() : '—'}</span> : record.expires_at ? <span className="font-mono text-xs">{new Date(record.expires_at).toLocaleString()}</span> : '—' },
             { title: '最后使用', dataIndex: 'last_used_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
             { title: '备注', dataIndex: 'runtime_reason', ellipsis: true, render: (value) => value ? <code className="text-xs">{value}</code> : '—' },
-            { title: '操作', width: 110, align: 'right', render: (_, record) => record.provider_kind === 'codex_oauth' && record.runtime_status === 'auth_invalid' ? <Typography.Text type="secondary">需重新导入</Typography.Text> : record.enabled && record.runtime_status !== 'available' ? <Popconfirm title="立即恢复这把密钥？" description="请确认供应商侧已经恢复额度或服务。" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(record.id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> : '—' },
+            { title: '操作', width: 110, align: 'right', render: (_, record) => record.provider_kind !== 'generic' && record.runtime_status === 'auth_invalid' ? <Typography.Text type="secondary">需重新导入</Typography.Text> : record.enabled && record.runtime_status !== 'available' ? <Popconfirm title="立即恢复这把密钥？" description="请确认供应商侧已经恢复额度或服务。" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(record.id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> : '—' },
           ]}
         />
       </Card>
+
+      {!!health.data?.model_cooldowns.length && <>
+        <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">模型冷却</Typography.Title>
+        <Table className="mt-4" rowKey={(item) => `${item.upstream_key_id}:${item.upstream_model}`} dataSource={health.data.model_cooldowns} pagination={false} scroll={{ x: 760 }} columns={[
+          { title: '供应商', dataIndex: 'provider_name' },
+          { title: '账号', dataIndex: 'account_name' },
+          { title: '真实模型', dataIndex: 'upstream_model', render: (value) => <code>{value}</code> },
+          { title: '原因', dataIndex: 'reason' },
+          { title: '恢复时间', dataIndex: 'recover_at', render: (value) => new Date(value).toLocaleString() },
+          { title: '操作', align: 'right', render: (_, item) => <Popconfirm title="清除此账号的模型冷却？" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(item.upstream_key_id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> },
+        ]} />
+      </>}
 
       <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">候选近期失败</Typography.Title>
       <Card className="mt-4 overflow-hidden" styles={{ body: { padding: 0 } }}>

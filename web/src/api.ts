@@ -104,6 +104,7 @@ export type AccessKey = {
 export type UpstreamKey = {
   file_name?: string
   oauth_identity?: { user_id: string; account_id: string; email?: string; plan?: string }
+  antigravity_identity?: { subject: string; email: string; project_id: string }
   access_token_expires_at?: string
   last_refresh?: string
   id: number
@@ -120,7 +121,7 @@ export type UpstreamKey = {
 }
 
 export type Provider = {
-  kind: 'generic' | 'codex_oauth'
+  kind: 'generic' | 'codex_oauth' | 'antigravity_oauth'
   id: number
   name: string
   enabled: boolean
@@ -143,7 +144,7 @@ export type AccessKeyOption = {
 }
 
 export type CandidateProtocol = {
-  protocol: 'chat_completions' | 'responses' | 'messages'
+  protocol: 'chat_completions' | 'responses' | 'messages' | 'antigravity'
   position: number
   supports_stream: boolean
   supports_tools: boolean
@@ -325,6 +326,7 @@ export type CandidateHealth = {
 }
 
 export type HealthOverview = {
+  model_cooldowns: Array<{ upstream_key_id: number; provider_name: string; account_name: string; upstream_model: string; reason: string; recover_at: string }>
   keys: UpstreamKeyHealth[]
   candidates: CandidateHealth[]
   unrouted_models: string[]

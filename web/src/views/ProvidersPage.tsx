@@ -31,7 +31,7 @@ export default function ProvidersPage() {
   const [enabled, setEnabled] = useState('')
   const [authType, setAuthType] = useState('')
   const [form] = Form.useForm<ProviderForm>()
-  const isCodex = Form.useWatch('kind', form) === 'codex_oauth'
+  const isOAuth = Form.useWatch('kind', form) !== 'generic'
   const queryClient = useQueryClient()
   const providers = useQuery({
     queryKey: ['providers', page, pageSize, name, enabled, authType],
@@ -46,7 +46,7 @@ export default function ProvidersPage() {
   const accountProvider = providers.data?.items.find((item) => item.id === editing?.id) ?? editing
   const save = useMutation({
     mutationFn: (values: ProviderForm) => {
-      if (values.kind === 'codex_oauth') return api<Provider | undefined>(editing ? `/api/admin/providers/${editing.id}` : '/api/admin/providers', { method: editing ? 'PUT' : 'POST', body: JSON.stringify({ name: values.name, kind: values.kind }) })
+      if (values.kind !== 'generic') return api<Provider | undefined>(editing ? `/api/admin/providers/${editing.id}` : '/api/admin/providers', { method: editing ? 'PUT' : 'POST', body: JSON.stringify({ name: values.name, kind: values.kind }) })
       const endpoints = Object.fromEntries([
         ['chat_completions', values.chat_completions], ['responses', values.responses], ['messages', values.messages],
       ].filter((entry): entry is [string, string] => !!entry[1]))
@@ -65,7 +65,7 @@ export default function ProvidersPage() {
       return api<Provider | undefined>(editing ? `/api/admin/providers/${editing.id}` : '/api/admin/providers', { method: editing ? 'PUT' : 'POST', body })
     },
     onSuccess: (result, values) => {
-      if (!editing && values.kind === 'codex_oauth' && result) {
+      if (!editing && values.kind !== 'generic' && result) {
         setEditing({ ...result, keys: [] })
         setPage(1)
         setNameInput('')
@@ -77,7 +77,7 @@ export default function ProvidersPage() {
         queryClient.invalidateQueries({ queryKey: ['overview'] })
         return
       }
-      if (values.kind !== 'codex_oauth') message.success(editing ? '供应商已更新' : '供应商已创建')
+      if (values.kind === 'generic') message.success(editing ? '供应商已更新' : '供应商已创建')
       setOpen(false)
       setEditing(null)
       form.resetFields()
@@ -140,24 +140,24 @@ export default function ProvidersPage() {
       <div className="mb-4 flex flex-col gap-2 sm:flex-row">
         <Input.Search allowClear enterButton="搜索" placeholder="搜索名称" className="min-w-0 sm:max-w-[360px]" value={nameInput} onChange={(event) => { const value = event.target.value; setNameInput(value); if (!value) { setName(''); setPage(1) } }} onSearch={(value) => { setName(value.trim()); setPage(1) }} />
         <Select allowClear placeholder="状态" className="w-full sm:w-[140px]" value={enabled || undefined} onChange={(value) => { setEnabled(value ?? ''); setPage(1) }} options={[{ value: 'true', label: '启用' }, { value: 'false', label: '停用' }]} />
-        <Select allowClear placeholder="鉴权方式" className="w-full sm:w-[180px]" value={authType || undefined} onChange={(value) => { setAuthType(value ?? ''); setPage(1) }} options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }, { value: 'oauth', label: 'Codex OAuth' }]} />
+        <Select allowClear placeholder="鉴权方式" className="w-full sm:w-[180px]" value={authType || undefined} onChange={(value) => { setAuthType(value ?? ''); setPage(1) }} options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }, { value: 'oauth', label: 'OAuth' }]} />
       </div>
       <div>
         <Table rowKey="id" loading={providers.isPending} dataSource={providers.data?.items ?? []} scroll={{ x: 900, y: 'calc(100vh - 330px)' }} pagination={{ current: page, pageSize, total: providers.data?.total ?? 0, showSizeChanger: true, pageSizeOptions: [10, 20, 50], onChange: (nextPage, nextPageSize) => { setPage(nextPageSize === pageSize ? nextPage : 1); setPageSize(nextPageSize) }, showTotal: (total) => `共 ${total} 条` }} locale={{ emptyText: <Empty className="py-14" description={name || enabled || authType ? '没有匹配的供应商' : '暂无供应商'} /> }} expandable={{ expandedRowRender: (record) => <ProviderDetails record={record} /> }} columns={[
           { title: '供应商', dataIndex: 'name', render: (value) => <strong>{value}</strong> },
           { title: '鉴权', dataIndex: 'auth_type', render: (value) => <Tag>{value}</Tag> },
           { title: '协议', dataIndex: 'endpoints', render: (value) => <Space wrap>{Object.keys(value).map((item) => <Tag color="orange" key={item}>{item}</Tag>)}</Space> },
-          { title: '凭据池', dataIndex: 'keys', render: (value, record) => `${value.length} ${record.kind === 'codex_oauth' ? '个账号' : '把密钥'}` },
+          { title: '凭据池', dataIndex: 'keys', render: (value, record) => `${value.length} ${record.kind !== 'generic' ? '个账号' : '把密钥'}` },
           { title: '启用', dataIndex: 'enabled', align: 'right', render: (enabled, record) => <Switch checked={enabled} onChange={(value) => toggle.mutate({ id: record.id, enabled: value })} /> },
           { title: '操作', width: 108, align: 'right', render: (_, record) => <Space size={4}><Button type="text" icon={<EditOutlined />} onClick={() => editProvider(record)} /><Popconfirm title="删除供应商？" description="仍被模型路由使用时将拒绝删除。" okText="删除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => remove.mutate(record.id)}><Button type="text" danger icon={<DeleteOutlined />} /></Popconfirm></Space> },
         ]} />
       </div>
-      <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑供应商' : '新增供应商'} width={isCodex ? 920 : 760} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
+      <Modal wrapClassName="mc-responsive-modal" title={editing ? '编辑供应商' : '新增供应商'} width={isOAuth ? 920 : 760} open={open} onCancel={() => { setOpen(false); setEditing(null) }} onOk={() => form.submit()} confirmLoading={save.isPending} okText="保存">
         <Form form={form} layout="vertical" onFinish={(values) => save.mutate(values)} className="pt-4">
-          <Form.Item name="kind" label="供应商类型" rules={[{ required: true }]}><Select disabled={!!editing} options={[{ value: 'generic', label: 'API Key' }, { value: 'codex_oauth', label: 'Codex OAuth' }]} /></Form.Item>
-          {!isCodex && <div className="mb-5 flex flex-col gap-3 rounded border border-black/10 bg-black/[.015] px-4 py-3 dark:border-white/10 dark:bg-white/[.02] sm:flex-row sm:items-center sm:justify-between"><span className="text-sm text-[#7c8d86]">供应商模板</span><Space wrap>{providerTemplates.map((template) => <Button key={template.name} size="small" onClick={() => applyTemplate(template)}>{template.name}</Button>)}</Space></div>}
-          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2"><Form.Item name="name" label="供应商名称" rules={[{ required: true }]}><Input placeholder="例如：OpenCode Go" /></Form.Item>{!isCodex && <Form.Item name="auth_type" label="上游鉴权" rules={[{ required: true }]}><Select options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} /></Form.Item>}</div>
-          {isCodex ? (accountProvider && <CodexAccounts provider={accountProvider} />) : <>
+          <Form.Item name="kind" label="供应商类型" rules={[{ required: true }]}><Select disabled={!!editing} options={[{ value: 'generic', label: 'API Key' }, { value: 'codex_oauth', label: 'Codex OAuth' }, { value: 'antigravity_oauth', label: 'Antigravity OAuth（实验性）' }]} /></Form.Item>
+          {!isOAuth && <div className="mb-5 flex flex-col gap-3 rounded border border-black/10 bg-black/[.015] px-4 py-3 dark:border-white/10 dark:bg-white/[.02] sm:flex-row sm:items-center sm:justify-between"><span className="text-sm text-[#7c8d86]">供应商模板</span><Space wrap>{providerTemplates.map((template) => <Button key={template.name} size="small" onClick={() => applyTemplate(template)}>{template.name}</Button>)}</Space></div>}
+          <div className="grid grid-cols-1 gap-x-4 sm:grid-cols-2"><Form.Item name="name" label="供应商名称" rules={[{ required: true }]}><Input placeholder="例如：OpenCode Go" /></Form.Item>{!isOAuth && <Form.Item name="auth_type" label="上游鉴权" rules={[{ required: true }]}><Select options={[{ value: 'bearer', label: 'Authorization: Bearer' }, { value: 'x-api-key', label: 'x-api-key' }, { value: 'custom', label: '自定义请求头' }]} /></Form.Item>}</div>
+          {isOAuth ? (accountProvider && <OAuthAccounts provider={accountProvider} />) : <>
           <Form.Item noStyle shouldUpdate={(before, after) => before.auth_type !== after.auth_type}>{({ getFieldValue }) => getFieldValue('auth_type') === 'custom' ? <Form.Item name="auth_header" label="自定义鉴权头" rules={[{ required: true }]}><Input placeholder="例如：api-key" /></Form.Item> : null}</Form.Item>
           <Collapse ghost items={[{ key: 'endpoints', label: '协议端点', children: <div className="grid gap-1"><Form.Item name="chat_completions" label="Chat Completions 完整 URL"><Input placeholder="https://…/v1/chat/completions" /></Form.Item><Form.Item name="responses" label="Responses 完整 URL"><Input placeholder="https://…/v1/responses" /></Form.Item><Form.Item name="messages" label="Messages 完整 URL"><Input placeholder="https://…/v1/messages" /></Form.Item></div> }, { key: 'advanced', label: '高级设置', children: <><Form.Item name="quota_codes" label="额度耗尽错误码（一行一个）"><Input.TextArea rows={3} placeholder="AccountQuotaExceeded" /></Form.Item><Form.Item name="static_headers" label="静态请求头（JSON 对象）" rules={[{ validator: validateStaticHeaders }]}><Input.TextArea rows={3} placeholder={'{"X-Custom-Header":"value"}'} className="font-mono" /></Form.Item></> }]} />
           <div className="mb-3 mt-5 flex items-center justify-between"><span className="font-medium">上游密钥池</span></div>
@@ -170,14 +170,15 @@ export default function ProvidersPage() {
 }
 
 function ProviderDetails({ record }: { record: Provider }) {
-  if (record.kind === 'codex_oauth') return <CodexAccounts provider={record} />
+  if (record.kind !== 'generic') return <OAuthAccounts provider={record} />
   return <div className="grid grid-cols-1 gap-5 p-4 lg:grid-cols-2 lg:gap-6">
     <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">协议端点</div>{Object.entries(record.endpoints).map(([key, value]) => <div key={key} className="mb-2 flex flex-col gap-1 sm:flex-row sm:gap-3"><Tag className="w-fit">{key}</Tag><code className="break-all text-xs">{value}</code></div>)}</div>
     <div><div className="mb-3 text-sm font-medium text-[#7c8d86]">上游密钥池</div>{record.keys.map((key) => <div key={key.id} className="mb-2 grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-b border-black/5 pb-2 dark:border-white/5"><span className="min-w-0 break-all">{key.name || `密钥 ${key.position + 1}`} · <code className="text-xs">{key.secret || '—'}</code></span><Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{runtimeStatusName(key.runtime_status)}</Tag></div>)}</div>
   </div>
 }
 
-function CodexAccounts({ provider }: { provider: Provider }) {
+function OAuthAccounts({ provider }: { provider: Provider }) {
+  const isAntigravity = provider.kind === 'antigravity_oauth'
   const input = useRef<HTMLInputElement>(null)
   const [uploading, setUploading] = useState(false)
   const [uploadErrors, setUploadErrors] = useState<Array<{ name: string; error: string }>>([])
@@ -196,7 +197,12 @@ function CodexAccounts({ provider }: { provider: Provider }) {
       const body = new FormData()
       body.append('file', file)
       try {
-        await api<UpstreamKey>(`/api/admin/providers/${provider.id}/auth-files`, { method: 'POST', body })
+        if (isAntigravity) {
+          const result = await api<{ accounts: UpstreamKey[]; errors: Array<{ email: string; error: string }> }>(`/api/admin/providers/${provider.id}/auth-files`, { method: 'POST', body })
+          errors.push(...result.errors.map((item) => ({ name: item.email || file.name, error: item.error })))
+        } else {
+          await api<UpstreamKey>(`/api/admin/providers/${provider.id}/auth-files`, { method: 'POST', body })
+        }
       } catch (error) {
         errors.push({ name: file.name, error: (error as Error).message })
       }
@@ -218,19 +224,20 @@ function CodexAccounts({ provider }: { provider: Provider }) {
   })
   const date = (value?: string | null) => value ? new Date(value).toLocaleString() : '—'
   return <div className="space-y-3 py-3">
-    <div className="flex items-center justify-between gap-3"><span className="font-medium">OAuth 账号</span><Button icon={<UploadOutlined />} loading={uploading} onClick={() => input.current?.click()}>上传 auth.json</Button><input ref={input} type="file" multiple accept=".json,application/json" style={{ display: 'none' }} aria-label="上传 OAuth 账号文件" onChange={(event) => upload(event.target.files)} /></div>
+    <div className="flex items-center justify-between gap-3"><span className="font-medium">OAuth 账号</span><Button icon={<UploadOutlined />} loading={uploading} onClick={() => input.current?.click()}>{isAntigravity ? '导入账号 JSON' : '上传 auth.json'}</Button><input ref={input} type="file" multiple accept=".json,application/json" style={{ display: 'none' }} aria-label="上传 OAuth 账号文件" onChange={(event) => upload(event.target.files)} /></div>
+    {isAntigravity && <Typography.Paragraph type="secondary" className="!mb-0 text-xs">实验性接入，尚无订阅账号实测。个人订阅的第三方访问受 <a href="https://antigravity.google/terms" target="_blank" rel="noreferrer">Google 条款</a>限制。导入前需配置签发令牌的 OAuth 客户端，见<a href="https://github.com/Sanjeever/model-confluence/blob/main/docs/operations.md#antigravity-oauth" target="_blank" rel="noreferrer">接入说明</a>。</Typography.Paragraph>}
     {uploadErrors.map((item, index) => <Typography.Text key={index} type="danger" className="block">{item.name} · {item.error}</Typography.Text>)}
     <Table<UpstreamKey> size="small" rowKey="id" dataSource={provider.keys} pagination={false} scroll={{ x: 740 }} locale={{ emptyText: '暂无账号' }} expandable={{ expandedRowRender: (key) => <Descriptions size="small" column={2} items={[
-      { key: 'account', label: '工作区 ID', children: key.oauth_identity?.account_id ?? '—' },
-      { key: 'plan', label: '套餐', children: key.oauth_identity?.plan ?? '—' },
+      { key: 'account', label: isAntigravity ? 'Google 账号 ID' : '工作区 ID', children: isAntigravity ? key.antigravity_identity?.subject : key.oauth_identity?.account_id ?? '—' },
+      { key: 'plan', label: isAntigravity ? '项目 ID' : '套餐', children: isAntigravity ? key.antigravity_identity?.project_id : key.oauth_identity?.plan ?? '—' },
       { key: 'expires', label: '访问令牌到期', children: date(key.access_token_expires_at) },
       { key: 'refresh', label: '最近刷新', children: date(key.last_refresh) },
       { key: 'recover', label: '恢复时间', children: date(key.recover_at) },
       { key: 'reason', label: '状态原因', children: key.runtime_reason ?? '—' },
     ]} /> }} columns={[
       { title: '文件名', dataIndex: 'file_name', ellipsis: true },
-      { title: '邮箱', width: 180, ellipsis: true, render: (_, key) => key.oauth_identity?.email ?? '—' },
-      { title: '工作区', render: (_, key) => <code className="text-xs">{key.oauth_identity?.account_id ?? '—'}</code> },
+      { title: '邮箱', width: 180, ellipsis: true, render: (_, key) => key.antigravity_identity?.email ?? key.oauth_identity?.email ?? '—' },
+      { title: isAntigravity ? '项目' : '工作区', render: (_, key) => <code className="break-all text-xs">{key.antigravity_identity?.project_id ?? key.oauth_identity?.account_id ?? '—'}</code> },
       { title: '运行状态', render: (_, key) => <Tag color={key.runtime_status === 'available' ? 'success' : key.runtime_status === 'auth_invalid' ? 'error' : 'warning'}>{key.runtime_status === 'auth_invalid' ? '需重新导入' : runtimeStatusName(key.runtime_status)}</Tag> },
       { title: '最近使用', render: (_, key) => <span className="text-xs">{date(key.last_used_at)}</span> },
       { title: '启用', render: (_, key) => <Switch checked={key.enabled} loading={toggle.isPending && toggle.variables?.id === key.id} onChange={(enabled) => toggle.mutate({ id: key.id, enabled })} /> },

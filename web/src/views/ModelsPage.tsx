@@ -9,6 +9,7 @@ const protocolLabels: Record<CandidateProtocol['protocol'], string> = {
   chat_completions: 'Chat Completions',
   responses: 'Responses',
   messages: 'Messages',
+  antigravity: 'Antigravity',
 }
 
 type CandidateForm = { id?: number; provider_id?: number; upstream_model?: string; default_max_output_tokens: number; max_output_tokens: number; protocols: CandidateProtocol['protocol'][] }
@@ -209,5 +210,5 @@ function configuredProtocols(providerID: number | undefined, providers?: Provide
 }
 
 function defaultProtocol(protocol: CandidateProtocol['protocol'], position: number): CandidateProtocol {
-  return { protocol, position, supports_stream: true, supports_tools: true, supports_parallel_tools: true, effort_levels: ['low', 'medium', 'high', 'xhigh'], supports_stream_usage: protocol === 'chat_completions' }
+  return { protocol, position, supports_stream: true, supports_tools: true, supports_parallel_tools: true, effort_levels: protocol === 'antigravity' ? [] : ['low', 'medium', 'high', 'xhigh'], supports_stream_usage: protocol === 'chat_completions' }
 }
