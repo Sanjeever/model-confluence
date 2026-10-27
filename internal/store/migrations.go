@@ -96,6 +96,16 @@ CREATE TABLE IF NOT EXISTS antigravity_model_states (
     PRIMARY KEY (upstream_key_id, upstream_model)
 );
 
+CREATE TABLE IF NOT EXISTS antigravity_tool_history (
+    call_id TEXT PRIMARY KEY,
+    access_key_id INTEGER REFERENCES access_keys(id) ON DELETE CASCADE,
+    provider_id INTEGER NOT NULL REFERENCES providers(id) ON DELETE CASCADE,
+    upstream_key_id INTEGER NOT NULL REFERENCES upstream_keys(id) ON DELETE CASCADE,
+    upstream_model TEXT NOT NULL,
+    history_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS virtual_models (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,

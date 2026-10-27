@@ -250,6 +250,27 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		return
 	}
 
+	historyIDs, err := protocol.AntigravityHistoryIDs(body, inboundProtocol)
+	if err != nil {
+		h.finishError(w, inboundProtocol, requestID, started, 400, "invalid_request", err.Error())
+		return
+	}
+	history := make(map[string]store.AntigravityToolHistory)
+	for _, id := range historyIDs {
+		if _, exists := history[id]; exists {
+			continue
+		}
+		item, err := h.store.AntigravityToolHistory(accessKeyID, id)
+		if err != nil {
+			status, message := 500, "读取 Antigravity 工具历史失败"
+			if errors.Is(err, sql.ErrNoRows) {
+				status, message = 400, "Antigravity 工具历史不存在或不属于当前访问密钥，请重新开始工具调用"
+			}
+			h.finishError(w, inboundProtocol, requestID, started, status, "antigravity_history_error", message)
+			return
+		}
+		history[id] = item
+	}
 	routes, err := h.store.ResolveRoutes(store.RoutingRequirements{
 		VirtualModel: requestMeta.Model, Protocol: inboundProtocol, Stream: requestMeta.Stream,
 		Tools: requestMeta.Tools, ParallelTools: requestMeta.ParallelTools, Effort: requestMeta.Effort,
@@ -262,6 +283,23 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		}
 		h.finishError(w, inboundProtocol, requestID, started, status, code, err.Error())
 		return
+	}
+	if len(history) > 0 {
+		compatible := routes[:0]
+		for _, route := range routes {
+			matches := route.UpstreamProtocol == protocol.Antigravity
+			for _, item := range history {
+				matches = matches && route.Provider.ID == item.ProviderID && route.Key.ID == item.UpstreamKeyID && route.UpstreamModel == item.UpstreamModel
+			}
+			if matches {
+				compatible = append(compatible, route)
+			}
+		}
+		routes = compatible
+		if len(routes) == 0 {
+			h.finishError(w, inboundProtocol, requestID, started, 400, "antigravity_history_error", "Antigravity 工具历史要求原供应商、账号和真实模型，当前没有兼容路由")
+			return
+		}
 	}
 
 	oauthRetry := make(map[int64]int64)
@@ -287,7 +325,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			continue
 		}
 		if route.Provider.Kind == store.ProviderAntigravityOAuth {
-			result := h.attemptAntigravity(w, r, route, inboundProtocol, requestID, started, body, stream, oauthRetry[route.Key.ID], &position)
+			result := h.attemptAntigravity(w, r, route, inboundProtocol, requestID, started, body, stream, oauthRetry[route.Key.ID], &position, history)
 			if result.finished {
 				return
 			}

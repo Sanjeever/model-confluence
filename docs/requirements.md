@@ -192,6 +192,8 @@ Responses 转换保持无状态，避免让供应商会话标识变成网关隐�
 
 思考内容不属于可丢弃例外。明文推理输出可以用于展示，但不证明历史回传等价；客户端显式要求目标协议无法提供的 thinking/reasoning 内容时必须在调用上游前拒绝。signature、redacted_thinking 和 encrypted content 不得伪造为其他协议字段。当前兼容行为与设计差距见第 17 节。
 
+Antigravity 工具调用的 `thoughtSignature` 作为该供应商的原始状态保存在独立工具历史中，不映射为其他协议的思考签名。网关在正常结束及持久化成功后输出普通工具调用 ID，下一轮按 ID 恢复完整 model 内容、Part 顺序、原始调用 ID 与签名。历史与访问密钥、供应商、账号及真实模型绑定，不依赖日志载荷，不跨账号或模型恢复；重启和日志清理保留历史。客户端须保留原响应文本、工具名称、参数及同一响应内的调用顺序；无法完整恢复时在上游调用前拒绝。此例外不提供通用会话存储，也不接受客户端自行提交受保护思考状态。
+
 Codex OAuth 接受以下专属忽略规则。跨协议时先从该候选的入站副本移除，再转换到 Responses；同协议绕过规范模型，保留可接受的未知字段、工具历史及 reasoning/encrypted_content。忽略路径保存到 attempt，不改写入站日志；后备普通候选仍使用入站原文。
 
 | 参数 | Codex 行为 |
@@ -502,7 +504,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 | 错误追踪（10） | 正常生成处理建立 request_id 并返回响应头，但鉴权失败和请求体读取失败发生在此之前；这些响应未必有 request_id，读取失败直接返回 HTTP 错误文本。设计要求统一协议错误不代表这些入口已满足。 | [网关鉴权与读取](../internal/gateway/handler.go) |
 | 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志存储协议、端点、响应状态码与头部，不保存原始 HTTP 状态行；attempt 未单独保存连接耗时。推理强度仅保存入站值，没有独立实际发送值字段。非流式 usage 保存原 usage JSON，流式 raw_usage_json 是合并后的标准化指标；原始事件在未清理的响应载荷中。 | [网关收尾](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[日志 schema](../internal/store/migrations.go) |
 | Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
-| Antigravity OAuth 集成 | 实验性实现浏览器登录、账号导入、按需刷新、三入口文本与无签名 function 工具转换、内联图片、SSE 聚合和模型冷却。没有真实订阅账号验收；OAuth 客户端权限、内部端点、模型权限、schema 接受范围和多轮工具线上行为均未确认。拒绝显式推理、受保护历史与签名工具调用；不实现签名缓存、远程图片下载或 Responses custom/shell/apply_patch 往返。参考项目的签名占位、提示词注入和静默降级不作为本项目契约。 | [账号](../internal/antigravity/oauth.go)、[登录](../internal/antigravity/login.go)、[请求](../internal/protocol/antigravity_request.go)、[响应](../internal/protocol/antigravity_response.go)、[网关](../internal/gateway/antigravity.go) |
+| Antigravity OAuth 集成 | 实验性实现浏览器登录、账号导入、按需刷新、三入口文本与 function 工具转换、内联图片、SSE 聚合和模型冷却。带签名工具调用持久化原始内容，通过普通工具 ID 恢复历史；三入口流式与非流式、并行和连续工具调用、访问密钥隔离、重启及日志清理已由本地 mock 验证。真实订阅的模型权限、schema 接受范围和多轮工具线上行为仍需按账号验证。拒绝显式推理及客户端直接提交的受保护历史；不实现远程图片下载或 Responses custom/shell/apply_patch 往返。参考项目的签名占位、提示词注入和静默降级不作为本项目契约。 | [账号](../internal/antigravity/oauth.go)、[登录](../internal/antigravity/login.go)、[请求](../internal/protocol/antigravity_request.go)、[响应](../internal/protocol/antigravity_response.go)、[历史](../internal/store/antigravity_tools.go)、[网关](../internal/gateway/antigravity.go) |
 | 浏览器 OAuth 登录 | 两种供应商支持自动回调与完整 URL 手动提交，授权链接、PKCE、令牌交换与落库已覆盖本地 mock；单次处理、会话隔离、取消、超时和保存失败已验证。Antigravity 曾在 sg1 通过 SSH 补送一次真实授权回调并成功保存账号，只证明该次登录与身份、项目发现成功，不代表模型权限或所有客户端兼容。新的 URL 回填入口仍需真实授权操作验收；不支持设备码、公网自动回调和原位重新登录。回环监听位于进程网络命名空间，普通 Docker 端口发布不能作为自动回调通道。 | [登录会话](../internal/oauthlogin/login.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[运行说明](operations.md#浏览器登录) |
 | 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤，额外指标可能直接发送给客户端。仅写日志的要求仍是设计目标。 | [网关代理](../internal/gateway/handler.go)、[流式编码](../internal/protocol/stream_encode.go) |
 | 可信代理与退出（2、13） | 客户端 IP 解析只处理可信对端的 X-Forwarded-For，尚未支持 Forwarded。进程信号触发有期限的 HTTP Shutdown，但未把进程信号 context 直接作为所有请求 context 的取消源；不能声称信号到来立即取消所有上游。 | [IP 解析](../internal/httpx/httpx.go)、[程序入口](../cmd/model-confluence/main.go) |

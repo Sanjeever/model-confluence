@@ -30,9 +30,10 @@ type antigravityDocument struct {
 }
 
 type antigravityPart struct {
-	Text         string `json:"text"`
-	Thought      bool   `json:"thought"`
-	Signature    string `json:"thoughtSignature"`
+	Raw          json.RawMessage `json:"-"`
+	Text         string          `json:"text"`
+	Thought      bool            `json:"thought"`
+	Signature    string          `json:"thoughtSignature"`
 	FunctionCall *struct {
 		ID   string          `json:"id"`
 		Name string          `json:"name"`
@@ -44,7 +45,11 @@ func (p *antigravityPart) UnmarshalJSON(data []byte) error {
 	type part antigravityPart
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	return decoder.Decode((*part)(p))
+	if err := decoder.Decode((*part)(p)); err != nil {
+		return err
+	}
+	p.Raw = append(json.RawMessage(nil), data...)
+	return nil
 }
 
 func decodeAntigravityDocument(data []byte) (antigravityDocument, error) {
@@ -120,6 +125,21 @@ type antigravityStreamState struct {
 	done          bool
 	toolIndex     int
 	signedThought bool
+	parts         []json.RawMessage
+	calls         []ToolCall
+	upstreamIDs   []string
+	pending       []streamEvent
+	saveTools     func(AntigravityToolTurn) error
+}
+
+type AntigravityToolTurn struct {
+	Content     json.RawMessage
+	Calls       []ToolCall
+	UpstreamIDs []string
+}
+
+func (c *StreamConverter) SetAntigravityToolStore(save func(AntigravityToolTurn) error) {
+	c.decoder.antigravity.saveTools = save
 }
 
 func (d *streamDecoder) decodeAntigravity(data []byte) ([]streamEvent, error) {
@@ -155,14 +175,15 @@ func (d *streamDecoder) decodeAntigravity(data []byte) ([]streamEvent, error) {
 			return nil, fmt.Errorf("Antigravity 返回不支持的候选索引 %d", candidate.Index)
 		}
 		for _, part := range candidate.Content.Parts {
+			state.parts = append(state.parts, part.Raw)
 			if part.Signature != "" {
-				if state.toolIndex > 0 {
+				if state.toolIndex > 0 && state.saveTools == nil {
 					return nil, fmt.Errorf("Antigravity 工具调用包含不支持的签名历史")
 				}
 				state.signedThought = true
 			}
 			if part.FunctionCall != nil {
-				if state.signedThought {
+				if state.signedThought && state.saveTools == nil {
 					return nil, fmt.Errorf("该 Antigravity 工具调用要求 thoughtSignature 历史回传，当前版本尚不支持；请使用无需签名的模型")
 				}
 				call := part.FunctionCall
@@ -182,6 +203,11 @@ func (d *streamDecoder) decodeAntigravity(data []byte) ([]streamEvent, error) {
 				} else if !antigravityCallID.MatchString(id) {
 					return nil, fmt.Errorf("Antigravity 工具调用 ID 无法安全回传")
 				}
+				state.upstreamIDs = append(state.upstreamIDs, call.ID)
+				if state.saveTools != nil {
+					id = newID("call_ag")
+				}
+				state.calls = append(state.calls, ToolCall{ID: id, Name: call.Name, Arguments: call.Args})
 				state.response.Blocks = append(state.response.Blocks, Block{Type: "tool_call", ToolCall: &ToolCall{ID: id, Name: call.Name, Arguments: call.Args}})
 				events = append(events, streamEvent{Kind: streamToolStart, Index: state.toolIndex, CallID: id, Name: call.Name}, streamEvent{Kind: streamToolDelta, Index: state.toolIndex, CallID: id, Delta: string(call.Args)}, streamEvent{Kind: streamToolEnd, Index: state.toolIndex, CallID: id})
 				state.toolIndex++
@@ -226,7 +252,23 @@ func (d *streamDecoder) decodeAntigravity(data []byte) ([]streamEvent, error) {
 		events = append(events, streamEvent{Kind: streamUsage, Usage: usage})
 	}
 	if state.done {
+		if len(state.calls) > 0 && state.saveTools != nil {
+			content, err := json.Marshal(map[string]any{"role": "model", "parts": state.parts})
+			if err != nil {
+				return nil, err
+			}
+			if err := state.saveTools(AntigravityToolTurn{Content: content, Calls: state.calls, UpstreamIDs: state.upstreamIDs}); err != nil {
+				return nil, err
+			}
+		}
 		events = append(events, streamEvent{Kind: streamDone})
+	}
+	if len(state.calls) > 0 && state.saveTools != nil {
+		state.pending = append(state.pending, events...)
+		if !state.done {
+			return nil, nil
+		}
+		events, state.pending = state.pending, nil
 	}
 	return events, nil
 }

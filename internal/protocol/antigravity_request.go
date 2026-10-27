@@ -58,7 +58,21 @@ func PrepareAntigravityRequest(body []byte, source, model string, defaultMax, ma
 func EncodeAntigravityRequest(request Request, project, requestID string) ([]byte, error) {
 	contents := make([]any, 0, len(request.Messages))
 	calls := make(map[string]ToolCall)
+	previousResults := false
 	for mi, message := range request.Messages {
+		if len(message.AntigravityContent) > 0 {
+			previousResults = false
+			contents = append(contents, message.AntigravityContent)
+			for _, block := range message.Blocks {
+				if block.ToolCall != nil {
+					if _, exists := calls[block.ToolCall.ID]; exists {
+						return nil, fmt.Errorf("messages[%d]: 重复工具调用 ID", mi)
+					}
+					calls[block.ToolCall.ID] = *block.ToolCall
+				}
+			}
+			continue
+		}
 		role := "user"
 		if message.Role == "assistant" {
 			role = "model"
@@ -97,12 +111,28 @@ func EncodeAntigravityRequest(request Request, project, requestID string) ([]byt
 				if result.IsError {
 					field = "error"
 				}
-				parts = append(parts, map[string]any{"functionResponse": map[string]any{"id": result.CallID, "name": call.Name, "response": map[string]string{field: result.Content}}})
+				response := map[string]any{"name": call.Name, "response": map[string]string{field: result.Content}}
+				if call.UpstreamID != "" {
+					response["id"] = call.UpstreamID
+				} else if !strings.HasPrefix(call.ID, "call_ag_") {
+					response["id"] = call.ID
+				}
+				parts = append(parts, map[string]any{"functionResponse": response})
 			default:
 				return nil, fmt.Errorf("%s: Antigravity 不支持历史内容类型 %s", path, block.Type)
 			}
 		}
-		contents = append(contents, map[string]any{"role": role, "parts": parts})
+		onlyResults := len(message.Blocks) > 0
+		for _, block := range message.Blocks {
+			onlyResults = onlyResults && block.Type == "tool_result"
+		}
+		if onlyResults && previousResults {
+			previous := contents[len(contents)-1].(map[string]any)
+			previous["parts"] = append(previous["parts"].([]any), parts...)
+		} else {
+			contents = append(contents, map[string]any{"role": role, "parts": parts})
+		}
+		previousResults = onlyResults
 	}
 	generation := map[string]any{"maxOutputTokens": request.MaxOutputTokens}
 	if request.Temperature != nil {

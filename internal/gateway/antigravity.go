@@ -130,9 +130,16 @@ type antigravityAttemptResult struct {
 	err           error
 }
 
-func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, route store.ResolvedRoute, inbound, requestID string, started time.Time, body []byte, stream *streamResponse, rejectedRevision int64, position *int) antigravityAttemptResult {
+func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, route store.ResolvedRoute, inbound, requestID string, started time.Time, body []byte, stream *streamResponse, rejectedRevision int64, position *int, history map[string]store.AntigravityToolHistory) antigravityAttemptResult {
 	request, ignored, err := protocol.PrepareAntigravityRequest(body, inbound, route.UpstreamModel, route.DefaultMaxOutputTokens, route.MaxOutputTokens)
 	if err != nil {
+		return antigravityAttemptResult{status: 400, err: err}
+	}
+	turns := make(map[string]protocol.AntigravityToolTurn)
+	for id, item := range history {
+		turns[id] = item.Turn
+	}
+	if err := protocol.RestoreAntigravityHistory(&request, turns); err != nil {
 		return antigravityAttemptResult{status: 400, err: err}
 	}
 	// 内容编码和历史校验先于 OAuth 刷新，拒绝不支持的请求时不访问上游。
@@ -263,6 +270,12 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 		return err
 	}
 	converter.SetChatUsage(includeUsage)
+	converter.SetAntigravityToolStore(func(turn protocol.AntigravityToolTurn) error {
+		if err := h.store.SaveAntigravityToolTurn(requestID, route, turn); err != nil {
+			return fmt.Errorf("%w: 保存工具历史: %v", errAntigravityLogging, err)
+		}
+		return nil
+	})
 	readCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	events := readStreamEvents(readCtx, bufio.NewReader(reader))

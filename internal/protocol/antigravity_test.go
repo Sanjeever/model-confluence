@@ -3,6 +3,7 @@ package protocol
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 )
@@ -35,6 +36,33 @@ func TestAntigravityRequestBoundaries(t *testing.T) {
 	body, err := EncodeAntigravityRequest(request, "project", "req")
 	if err != nil || !bytes.Contains(body, []byte(`"functionResponse":{"id":"call_test","name":"lookup"`)) {
 		t.Fatalf("tool history: %s %v", body, err)
+	}
+}
+
+func TestAntigravityToolPersistenceBeforeEmission(t *testing.T) {
+	for _, fail := range []bool{false, true} {
+		c, _ := NewStreamConverter(Antigravity, Chat, "virtual")
+		persistErr := errors.New("disk unavailable")
+		var saved AntigravityToolTurn
+		c.SetAntigravityToolStore(func(turn AntigravityToolTurn) error {
+			saved = turn
+			if fail {
+				return persistErr
+			}
+			return nil
+		})
+		chunks, semantic, _, err := c.Convert(SSEEvent{Data: []byte(`{"response":{"candidates":[{"content":{"parts":[{"functionCall":{"id":"up","name":"lookup","args":{}}}]}}]}}`)})
+		if err != nil || len(chunks) != 0 || semantic || len(saved.Calls) != 0 {
+			t.Fatal("tool emitted before finish/persistence", err)
+		}
+		chunks, semantic, done, err := c.Convert(SSEEvent{Data: []byte(`{"response":{"candidates":[{"content":{"parts":[{"text":"","thoughtSignature":"trailing-signature"}]},"finishReason":"STOP"}]}}`)})
+		if fail {
+			if !errors.Is(err, persistErr) || len(chunks) > 0 || semantic {
+				t.Fatal("failed persistence leaked tool", err)
+			}
+		} else if err != nil || !done || !semantic || len(chunks) == 0 || !bytes.Contains(saved.Content, []byte("trailing-signature")) {
+			t.Fatal("signed tool not saved/emitted", err)
+		}
 	}
 }
 

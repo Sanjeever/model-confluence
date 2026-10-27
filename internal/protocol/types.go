@@ -25,8 +25,9 @@ type Request struct {
 }
 
 type Message struct {
-	Role   string
-	Blocks []Block
+	Role               string
+	Blocks             []Block
+	AntigravityContent json.RawMessage
 }
 
 type ImageSourceKind string
@@ -59,9 +60,10 @@ type Block struct {
 }
 
 type ToolCall struct {
-	ID        string
-	Name      string
-	Arguments json.RawMessage
+	ID         string
+	UpstreamID string
+	Name       string
+	Arguments  json.RawMessage
 }
 
 type ToolResult struct {
