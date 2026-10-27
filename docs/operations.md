@@ -135,13 +135,13 @@ ssh -N -L 1455:127.0.0.1:1455 -L 51121:127.0.0.1:51121 user@server
 
 回调服务始终绑定进程所在网络命名空间的回环地址。普通 Docker `-p` 映射不能访问容器回环；Docker 桥接部署建议使用回调 URL 回填。Linux 主机网络部署可按上例转发，其他网络环境使用自动回调时需在同一网络命名空间建立隧道。本版本不提供公网自动回调或设备码登录。
 
-Antigravity 登录仍需配置下文的 OAuth 客户端，并确认它允许表中的回调地址及所需 scope；授权请求包含 `openid`、`userinfo.email` 和 `cloud-platform`，要求离线访问。交换令牌后还会验证 Google 身份和查询项目；缺少 refresh token 或项目时明确失败。配置客户端不代表拥有订阅模型权限，尚无真实 AGY 订阅账号验收。
+Antigravity 登录仍需配置下文的 OAuth 客户端，并确认它允许表中的回调地址及所需 scope；授权请求包含 `openid`、`userinfo.email` 和 `cloud-platform`，要求离线访问。交换令牌后还会验证 Google 身份和查询项目；缺少 refresh token 或项目时明确失败。配置客户端不代表拥有订阅模型权限。
 
 登录只添加账号，不覆盖已有账号令牌。遇到重复账号时明确提示；永久鉴权失效时删除旧账号，再登录或导入。供应商仍保持管理员设置的启停状态，登录不会开启已停用的供应商。完整回调 URL、授权码、PKCE verifier、令牌交换响应不进入模型载荷或普通运行日志。手动提交通过有管理员会话及 CSRF 校验的管理 POST 接口处理，输入只在当前页面内存中保留，处理结束后清空。
 
 ### Antigravity OAuth
 
-此接入为实验性能力，尚无真实订阅账号验收。Google 当前[服务条款第 6 条](https://antigravity.google/terms)限制个人订阅通过第三方工具访问，并说明可能暂停或终止 Antigravity、Gemini CLI 账号。接通内部接口不代表官方允许将订阅用于第三方 API 网关。
+此接入为实验性能力，已验证范围见[已知实现差距与兼容边界](requirements.md#17-已知实现差距与兼容边界)。Google 当前[服务条款第 6 条](https://antigravity.google/terms)限制个人订阅通过第三方工具访问，并说明可能暂停或终止 Antigravity、Gemini CLI 账号。接通内部接口不代表官方允许将订阅用于第三方 API 网关。
 
 1. 在运行环境注入上述 OAuth client ID 和 secret。它们必须属于签发 refresh token 的客户端；本项目不内置第三方客户端凭据，不轮流尝试其他客户端。自行注册的新客户端不保证拥有 Antigravity 权限。
 2. 在供应商页创建「Antigravity OAuth（实验性）」供应商，然后导入 Antigravity-Manager 导出的账号 JSON。支持 `{"accounts":[{"email":"user@example.com","refresh_token":"请替换"}]}`、单个账号项及含 `token.refresh_token` 的完整账号文件；可附带 `client_id` 检查绑定。上传限 1 MiB，每个文件最多 100 个账号，批量导入分别返回成功项和失败原因。文件中的身份和项目不作为鉴权依据。
