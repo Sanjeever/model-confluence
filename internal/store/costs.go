@@ -35,10 +35,7 @@ type UsagePage struct {
 	Summary UsageSummary `json:"summary"`
 }
 
-// UsageBreakdown aggregates per-day token usage across completed requests,
-// grouped by virtual model and the final upstream model actually reached.
-// Cached input is attributed to the cache-read bucket when the upstream
-// reported it, otherwise input tokens remain in the non-cached bucket.
+// UsageBreakdown 仅汇总已完成请求的已知用量，按 UTC 日期和最终路由分组；缺失指标不参与求和。
 func (s *Store) UsageBreakdown(createdFrom, createdTo time.Time, virtualModel string) (UsagePage, error) {
 	where := "r.created_at >= ? AND r.created_at < ?"
 	args := []any{formatTime(createdFrom), formatTime(createdTo)}
@@ -99,8 +96,6 @@ FROM requests r WHERE ` + where + ` AND r.status = 'completed'`
 	return UsagePage{Groups: groups, Summary: summary}, nil
 }
 
-// VirtualModelNames returns the names of non-archived virtual models ordered
-// by name, used to populate the usage filter dropdown.
 func (s *Store) VirtualModelNames() ([]string, error) {
 	rows, err := s.db.Query(`SELECT name FROM virtual_models WHERE archived_at IS NULL ORDER BY name`)
 	if err != nil {

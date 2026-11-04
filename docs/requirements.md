@@ -60,7 +60,7 @@ Antigravity OAuth（`antigravity_oauth`）是实验性原生供应商，使用 G
 
 Codex OAuth 账号通过浏览器登录，或管理员上传原生 ChatGPT `auth.json`、codex-deck 导出文件建立。允许空账号池和删除最后一个账号；同用户、工作区的未删除账号在实例内拒绝重复添加。管理 API 返回来源、身份、令牌到期、刷新时间及运行状态，不返回原始文件或令牌。JWT 解码用于元数据，不验证签名，也不代表模型调用权限已验证。
 
-两个 OAuth 供应商的浏览器登录统一使用授权码、PKCE S256 和临时回环回调。登录会话绑定发起的管理员会话及供应商，`state` 随机且只能消费一次；网络令牌交换不持有会话管理锁，最终保存与取消串行，取消或到期后不再保存。保存前重新验证管理员会话，供应商在持久化事务中检查存在与类型。登录不新增持久化会话表，也不修改用户的本地凭据；超时、取消、完成后清除临时秘密并释放端口。端口、时限及部署方式见[浏览器登录](operations.md#浏览器登录)。
+两个 OAuth 供应商的浏览器登录统一使用授权码、PKCE S256 和临时回环回调。登录会话绑定发起的管理员会话及供应商，`state` 随机且只能消费一次。令牌交换不阻塞取消；取消、到期或管理员会话失效后不得保存账号，保存时须确认供应商仍存在且类型一致。临时秘密只保存在内存，结束后清除并释放端口，不修改用户本地凭据。端口、时限及部署方式见[浏览器登录](operations.md#浏览器登录)。
 
 管理员可在原登录弹窗中提交完整回调 URL，供远程及 Docker 部署使用；管理 API 要求管理员会话和 CSRF，校验登录归属及 URL 的 scheme、host、port、path、单一 `state`、授权码和提供的 issuer。后端只解析 URL，不访问输入地址；仍向固定供应商端点发送授权码与原 PKCE verifier。手动提交与自动回调共享一次性校验和状态锁，不能重复交换或重复保存。无效 URL 的错误不回显原文；完整地址及授权码不进入日志或持久化会话。
 
@@ -72,25 +72,7 @@ Codex OAuth 账号通过浏览器登录，或管理员上传原生 ChatGPT `auth
 
 客户端只请求虚拟模型名。每个虚拟模型包含一个有序候选列表，每个候选指向一个供应商和真实模型名。
 
-候选字段：
-
-- 供应商；
-- 真实模型名；
-- 管理员状态；
-- 候选顺序；
-- 默认最大输出 Token；
-- 最大输出 Token 上限；
-- 一个有序的协议入口列表。
-
-候选协议入口字段：
-
-- 协议类型：Chat Completions、Responses 或 Messages；
-- 后备顺序；
-- 是否支持流式；
-- 是否支持工具调用；
-- 是否支持并行工具调用；
-- 支持的推理强度集合；
-- 是否支持在 Chat 流中返回 usage。
+候选配置管理员启停、输出 Token 默认值与上限，以及有序的协议入口。每个入口声明流式、工具、并行工具、推理强度和 Chat 流式 usage 能力，使路由可以在调用前匹配请求。字段定义见 [Candidate 与 CandidateProtocol](../internal/store/catalog.go)。
 
 Codex 候选仅允许 Responses 上游协议。两个输出 Token 字段保存为 0，不表示输出长度控制或 Token 上限，管理界面隐藏这些配置。普通候选继续使用原配置规则。
 
@@ -102,7 +84,7 @@ Antigravity 候选仅使用内部 Antigravity 入口，执行候选默认输出 
 
 所有模型 API 都需要访问密钥鉴权。
 
-| 方法 | 路径 | 客户端协议 | 首版支持 |
+| 方法 | 路径 | 客户端协议 | 支持范围 |
 | --- | --- | --- | --- |
 | POST | `/v1/chat/completions` | OpenAI Chat Completions | 流式与非流式 |
 | POST | `/v1/responses` | OpenAI Responses | HTTP 与 SSE，不支持 WebSocket |
@@ -155,6 +137,8 @@ Antigravity 候选仅使用内部 Antigravity 入口，执行候选默认输出 
 
 Responses 的 `custom`、`shell` 和 `apply_patch` 在目标协议中规范化为具名客户端工具，响应时还原为客户端需要的类型。
 
+Chat Completions / Messages 的工具定义转换到 Responses 时，未声明 `strict` 的工具显式设置 `strict:false`，避免目标端按默认严格模式校验原 schema；Chat Completions 显式提供的 `strict` 值继续保留。依据见 [转换测试](../internal/protocol/request_test.go)。
+
 OpenAI 的 `minimal` 和 Anthropic 的 `max` 不是公共档位。目标入口不支持时必须在调用上游前拒绝，不做就近映射。使用记录同时保存客户端请求值和实际发送值。
 
 OpenAI 的 system/developer 与 Anthropic 顶层 system 不完全等价。首版只允许对话开头的高优先级指令，按原顺序折叠到目标协议的最高优先级指令区；对话中途出现 system/developer 指令时拒绝。
@@ -192,19 +176,11 @@ Responses 转换保持无状态，避免让供应商会话标识变成网关隐�
 
 思考内容不属于可丢弃例外。明文推理输出可以用于展示，但不证明历史回传等价；客户端显式要求目标协议无法提供的 thinking/reasoning 内容时必须在调用上游前拒绝。signature、redacted_thinking 和 encrypted content 不得伪造为其他协议字段。当前兼容行为与设计差距见第 17 节。
 
-Antigravity 工具调用的 `thoughtSignature` 作为该供应商的原始状态保存在独立工具历史中，不映射为其他协议的思考签名。网关在正常结束及持久化成功后输出普通工具调用 ID，下一轮按 ID 恢复完整 model 内容、Part 顺序、原始调用 ID 与签名。历史与访问密钥、供应商、账号及真实模型绑定，不依赖日志载荷，不跨账号或模型恢复；重启和日志清理保留历史。客户端须保留原响应文本、工具名称、参数及同一响应内的调用顺序；无法完整恢复时在上游调用前拒绝。此例外不提供通用会话存储，也不接受客户端自行提交受保护思考状态。
+Antigravity 工具调用的 `thoughtSignature` 作为该供应商的原始状态保存在独立工具历史中，不映射为其他协议的思考签名。网关在正常结束及持久化成功后输出普通工具调用 ID，下一轮按 ID 恢复完整 model 内容、Part 顺序、原始调用 ID 与签名。历史与访问密钥、供应商、账号及真实模型绑定，不依赖日志载荷，不跨账号或模型恢复；重启和日志清理保留历史。客户端须保留原响应文本、工具名称、参数及同一响应内的调用顺序；无法完整恢复时在上游调用前拒绝。此例外用于保留可验证的上游历史，不提供通用会话存储，也不接受客户端自行提交受保护思考状态；禁止用签名占位、提示词注入或静默删减绕过限制。
 
-Codex OAuth 接受以下专属忽略规则。跨协议时先从该候选的入站副本移除，再转换到 Responses；同协议绕过规范模型，保留可接受的未知字段、工具历史及 reasoning/encrypted_content。忽略路径保存到 attempt，不改写入站日志；后备普通候选仍使用入站原文。
+Codex OAuth 使用固定订阅后端，为兼容该后端忽略输出长度、采样等指定参数，不提供输出长度控制。允许忽略的字段集合集中维护在 [Codex 请求适配的 ignoredFields](../internal/codex/request.go)，边界由 [适配测试](../internal/codex/request_test.go) 约束，不允许任意扩展。同协议绕过规范模型，保留可接受的未知字段、工具历史及 reasoning/encrypted_content；跨协议仍受公共转换器限制，差距见第 17 节。
 
-| 参数 | Codex 行为 |
-| --- | --- |
-| `max_tokens`、`max_completion_tokens`、`max_output_tokens` | 删除，不提供输出长度控制 |
-| `temperature`、`top_p` | 删除 |
-| `truncation`、`user` | 删除 |
-| `prompt_cache_options`、`prompt_cache_retention` | 删除 |
-| `safety_identifier`、`stream_options` | 删除；Chat 客户端 usage chunk 仍按入站 `include_usage` 选择 |
-
-具体字段集合以 [Codex 请求适配](../internal/codex/request.go) 和测试为实现依据，不允许任意丢弃未知字段。适配将字符串 input 转为数组，补空 instructions，设置上游 `stream=true`、`store=false`，将 system 角色转换为 developer，不注入默认工具或人设，也不覆盖工具选择与并行限制。有效 `previous_response_id`、conversation、`background=true` 或 `store=true` 在强制设置字段前拒绝；未设置 store 或 `store=false` 可接受。该例外不扩大现有跨协议能力边界。
+忽略规则作用于当前候选的入站副本，路径保存到 attempt，入站日志和后备普通候选保留原文。适配强制上游 `stream=true`、`store=false`，在覆盖前拒绝有效 `previous_response_id`、conversation、`background=true` 或 `store=true`。Codex 专属适配不得覆盖工具选择或并行控制，不注入默认工具或人设。Chat 客户端 usage chunk 按入站 `include_usage` 选择。该例外不扩大跨协议能力边界。
 
 ## 7. 转换架构约束
 
@@ -367,7 +343,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 6. 供应商；
 7. 模型路由。
 
-性能监控页按日期范围展示请求数、成功率、首内容与总耗时 P95、状态分布和异常与慢请求列表。用量统计页按日期和模型聚合 Token 用量与缓存命中分布，不做金额估算。上游健康页展示密钥池运行状态、候选近期失败和无可用路由的模型。
+性能监控页按日期范围展示请求数、成功率、首内容与总耗时 P95、状态分布和异常与慢请求列表。用量统计按日期和模型汇总已完成请求的已知 Token 用量，不做金额估算；查询口径见 [用量聚合](../internal/store/costs.go)。上游健康页展示密钥池运行状态、候选近期失败和无可用路由的模型；候选失败来自历史 attempts，不表示网关内存冷却状态或特定请求的路由能力。
 
 精简安全事件不增加用户/审计管理模块；独立查看视图的范围见第 14 节。
 
@@ -490,23 +466,36 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 
 此处集中区分仍有效的设计要求、现有兼容边界和实现缺口。条目依据仓库代码与测试，不能当作供应商最新行为或永久承诺；涉及修改时只复核相关条目。修复缺口不要求同步重写全部文档，撤销设计约束则需在对应章节说明原因。
 
+### 17.1 实现缺口
+
+以下行为仍需按对应设计要求修复，不构成新的兼容许可。
+
 | 概念 / 设计依据 | 当前实现与处理边界 | 代码 / 测试依据 |
 | --- | --- | --- |
-| 未知字段与严格转换（6.3、7） | 管理 API 严格解码，但跨协议请求主要使用普通 JSON 解码，没有统一拒绝非空未知字段。已知状态字段和部分不支持模态会报错，不代表所有未知字段都有调用前校验。保留严格转换要求，不能将静默丢字段作为新许可。 | [管理 JSON](../internal/httpx/httpx.go)、[请求转换](../internal/protocol/request.go)、[图片拒绝测试](../internal/protocol/request_test.go) |
-| 输出 Token 上限（6.1） | 候选默认值和上限在配置保存时校验，网关未执行客户端超限拒绝或钳制；默认值只在跨协议转到 Messages 且客户端未给值时填充。同协议 Messages 不走该填充。 | [配置保存](../internal/store/catalog.go)、[请求转换](../internal/protocol/request.go)、[网关](../internal/gateway/handler.go) |
+| 未知字段与严格转换（6.3、7） | 公共跨协议解码器没有统一拒绝非空未知字段；已知状态字段和部分不支持模态会报错，不代表校验完整。Antigravity 已在公共解码前按允许字段集合校验，管理 API 也严格解码，不能将公共转换器的缺口推广到这些路径。 | [公共转换](../internal/protocol/request.go)、[Antigravity 校验及测试](../internal/protocol/antigravity_test.go)、[管理 JSON](../internal/httpx/httpx.go) |
+| 输出 Token 上限（6.1） | 普通供应商未执行客户端超限拒绝；默认值只在跨协议转到 Messages 且客户端未给值时填充，同协议 Messages 不走该填充。Antigravity 已填充默认值并拒绝非正数或超限值；Codex 忽略输出长度属于 6.3 节明确例外。 | [请求转换](../internal/protocol/request.go)、[Antigravity 请求](../internal/protocol/antigravity_request.go)、[网关](../internal/gateway/handler.go) |
 | 明文推理与历史（6.1–6.3） | 响应侧支持明文推理输出转换，不能声称完整 thinking 往返。跨协议请求仅 Messages→Chat 保留明文 thinking；Chat 解码忽略历史 `reasoning_content`，Responses 历史 reasoning item 会被拒绝，编码到 Responses / Messages 不保留 reasoning 块。同协议绕过规范模型，保留这些字段的语义。 | [请求转换](../internal/protocol/request.go)、[响应转换](../internal/protocol/response.go)、[thinking 测试](../internal/protocol/stream_test.go) |
 | 受保护思考与 Messages 兼容（6.3） | Messages 请求/响应转换不保留 signature、redacted_thinking，流式 signature_delta 被忽略；thinking / tool_use / tool_result 的部分字段类型使用宽松解码，不能保证均在调用前报错。Responses 只提取明文 reasoning summary，不解析 encrypted_content。不伪造受保护字段，亦不承诺加密思考可转换。 | [请求](../internal/protocol/request.go)、[响应](../internal/protocol/response.go)、[流式解码](../internal/protocol/stream_decode.go)、[兼容测试](../internal/protocol/stream_test.go) |
-| 高优先级历史指令（6.1） | Chat 请求会拒绝对话中途的 system/developer；Responses 解码会收集这些指令，未统一执行相同的位置限制。保留仅接受开头指令的设计要求。 | [请求转换](../internal/protocol/request.go) |
+| 高优先级历史指令（6.1） | 公共 Chat 解码器拒绝对话中途的 system/developer，Responses 解码器会收集并前移这些指令。Antigravity 在公共解码前已有位置校验。 | [公共转换](../internal/protocol/request.go)、[Antigravity 校验](../internal/protocol/antigravity_request.go) |
+| 工具并行控制（6.1、7） | 公共转换器用 bool 保存 parallel_tool_calls，未提供与显式 false 无法区分；有工具定义且转到 Chat / Responses 时会补出 false。Messages 的 disable_parallel_tool_use 未映射，转入 Messages 也不编码对应限制。需保留客户端意图；同协议透传和 Antigravity 专属校验不走此编码路径。 | [请求解码与编码](../internal/protocol/request.go)、[工具选择](../internal/protocol/tools.go)、[规范模型](../internal/protocol/types.go) |
 | 特殊工具与 ID（6.1、7） | Responses 的 custom / shell / apply_patch 定义可以规范化为具名工具，但响应编码缺少原工具类型上下文，通常返回 function_call，不能保证特殊工具历史还原。跨协议转入 Responses 的请求会将超过 64 字符的调用 ID 映射为请求内短 ID，调用与结果使用同一映射，并避开已有 ID；其他调用 / 响应 ID 仍会复用，仅部分对象生成新 ID；没有独立源 / 目标 ID 日志字段。完整安全 ID 和类型往返要求仍是设计目标。 | [请求转换](../internal/protocol/request.go)、[ID 测试](../internal/protocol/request_test.go)、[工具定义](../internal/protocol/tools.go)、[响应编码](../internal/protocol/response.go)、[流式编码](../internal/protocol/stream_encode.go)、[日志 schema](../internal/store/migrations.go) |
-| 流式提交与协议校验（8、9） | 普通供应商同协议 SSE 收到上游响应头即提交；跨协议在编码器产生首批输出时提交，可能早于首语义内容。心跳也可能提前提交 HTTP 头。转换首批输出前的失败可切换，已输出转换事件后不切换；不能承诺所有路径保留「首内容前切换」。普通同协议逐行透传也不提供完整 JSON/SSE 协议校验。Codex 使用独立终止语义检查并延迟到有效内容，不能推广为所有路径均已修复。 | [流式代理](../internal/gateway/handler.go)、[心跳](../internal/gateway/stream_heartbeat.go)、[编码器](../internal/protocol/stream_encode.go)、[提交测试](../internal/gateway/handler_test.go) |
+| 流式提交与协议校验（8、9） | 普通供应商同协议 SSE 收到上游响应头即提交；跨协议在编码器产生首批输出时提交，可能早于首语义内容，心跳也可能提前提交 HTTP 头。已提交后不再切换；普通同协议逐行透传也不提供完整 JSON/SSE 协议校验。Codex 和 Antigravity 有独立终止校验并缓冲起始元事件，不能推广为所有路径均已修复。 | [普通代理及测试](../internal/gateway/handler_test.go)、[心跳](../internal/gateway/stream_heartbeat.go)、[Codex](../internal/gateway/codex.go)、[Antigravity](../internal/gateway/antigravity.go) |
 | 密钥恢复与结构化错误（9） | 普通 429 可按 Retry-After 恢复；普通供应商 quota_exhausted 保持不可用，直至管理员重置或更换密钥，不读取可靠额度恢复信号；Codex 已读取结构化额度恢复时间。错误码读取兼容嵌套 error.code / error.type 及顶层 code / type，仍为精确匹配，不依赖错误文案。 | [错误分类](../internal/gateway/handler.go)、[密钥可用性](../internal/store/routing.go)、[状态重置测试](../internal/store/upstream_keys_test.go) |
-| 模型列表与健康（4、12.2） | 模型列表查询所有启用且未归档的虚拟模型，未检查候选存在性；列表不表示即时可路由。上游健康中的候选失败来自历史 attempts，不能代表网关内存冷却或某个具体请求的能力匹配结果。 | [模型列表](../internal/store/routing.go)、[健康查询](../internal/store/health.go) |
+| 模型列表（4） | 模型列表查询所有启用且未归档的虚拟模型，未检查候选存在性；「有已配置候选」仍是设计要求，列表不表示即时可路由。 | [模型列表](../internal/store/routing.go) |
 | 错误追踪（10） | 正常生成处理建立 request_id 并返回响应头，但鉴权失败和请求体读取失败发生在此之前；这些响应未必有 request_id，读取失败直接返回 HTTP 错误文本。设计要求统一协议错误不代表这些入口已满足。 | [网关鉴权与读取](../internal/gateway/handler.go) |
-| 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志存储协议、端点、响应状态码与头部，不保存原始 HTTP 状态行；attempt 未单独保存连接耗时。推理强度仅保存入站值，没有独立实际发送值字段。非流式 usage 保存原 usage JSON，流式 raw_usage_json 是合并后的标准化指标；原始事件在未清理的响应载荷中。 | [网关收尾](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[日志 schema](../internal/store/migrations.go) |
-| Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
-| Antigravity OAuth 集成 | 实验性实现浏览器登录、账号导入、按需刷新、三入口文本与 function 工具转换、内联图片、SSE 聚合和模型冷却。带签名工具调用持久化原始内容，通过普通工具 ID 恢复历史；三入口流式与非流式、并行和连续工具调用、访问密钥隔离、重启及日志清理已由本地 mock 验证。2026-10-27 在 sg1 验证单账号 `gemini-3-flash` 经 Chat Completions 入站的流式与非流式连续两次带签名工具调用及最终回答，共六次真实请求成功；未覆盖其他账号、模型、schema 或其他入站的线上行为。拒绝显式推理及客户端直接提交的受保护历史；不实现远程图片下载或 Responses custom/shell/apply_patch 往返。参考项目的签名占位、提示词注入和静默降级不作为本项目契约。 | [账号](../internal/antigravity/oauth.go)、[登录](../internal/antigravity/login.go)、[请求](../internal/protocol/antigravity_request.go)、[响应](../internal/protocol/antigravity_response.go)、[历史](../internal/store/antigravity_tools.go)、[网关](../internal/gateway/antigravity.go) |
-| 浏览器 OAuth 登录 | 两种供应商支持自动回调与完整 URL 手动提交，授权链接、PKCE、令牌交换与落库已覆盖本地 mock；单次处理、会话隔离、取消、超时和保存失败已验证。Antigravity 曾在 sg1 通过 SSH 补送一次真实授权回调并成功保存账号，只证明该次登录与身份、项目发现成功，不代表模型权限或所有客户端兼容。新的 URL 回填入口仍需真实授权操作验收；不支持设备码、公网自动回调和原位重新登录。回环监听位于进程网络命名空间，普通 Docker 端口发布不能作为自动回调通道。 | [登录会话](../internal/oauthlogin/login.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[运行说明](operations.md#浏览器登录) |
-| 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤，额外指标可能直接发送给客户端。仅写日志的要求仍是设计目标。 | [网关代理](../internal/gateway/handler.go)、[流式编码](../internal/protocol/stream_encode.go) |
+| 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志不保存原始 HTTP 状态行或独立连接耗时，推理强度只有入站值。普通非流式保存原 usage JSON，普通流式及 Codex 保存合并后的标准化指标；Antigravity 保存上游 usageMetadata。原始事件仍在未清理的响应载荷中。 | [普通代理](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[Antigravity 收尾](../internal/gateway/antigravity.go)、[schema](../internal/store/migrations.go) |
+| 延迟口径（11.4） | request 计时在读取入站正文前启动；流式 attempt.first_content_ms 复用 request 起点，没有扣除前置路由、重试及转换时间。Codex / Antigravity 非流式聚合也按上游语义事件记首内容，早于向客户端写出 JSON。现有数值不能全部按 11.4 节的设计口径解释。 | [普通代理](../internal/gateway/handler.go)、[Codex](../internal/gateway/codex.go)、[Antigravity](../internal/gateway/antigravity.go) |
+| 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤。Codex 与 Antigravity 的 Chat 输出已有相应过滤，不能将普通路径的缺口推广到全部供应商。 | [普通代理](../internal/gateway/handler.go)、[Codex 过滤](../internal/gateway/codex.go)、[Antigravity 过滤](../internal/gateway/antigravity.go) |
 | 可信代理与退出（2、13） | 客户端 IP 解析只处理可信对端的 X-Forwarded-For，尚未支持 Forwarded。进程信号触发有期限的 HTTP Shutdown，但未把进程信号 context 直接作为所有请求 context 的取消源；不能声称信号到来立即取消所有上游。 | [IP 解析](../internal/httpx/httpx.go)、[程序入口](../cmd/model-confluence/main.go) |
+
+### 17.2 供应商验证边界
+
+下表区分仓库测试覆盖与历史线上验收记录。接入限制和用户操作集中在 [运行与开发](operations.md#管理后台与客户端调用)。
+
+| 接入 | 验证范围与限制 | 依据 |
+| --- | --- | --- |
+| Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
+| Antigravity OAuth 集成 | 仓库 mock 测试覆盖三入口流式与非流式、签名工具并行与连续调用、访问密钥隔离、重启及日志清理。历史验收记录记载：2026-10-27 在 sg1 使用单账号、gemini-3-flash、Chat Completions 入站，流式与非流式各连续两次带签名工具调用及最终回答，共六次真实请求成功；未覆盖其他账号、模型、schema 或其他入站的线上行为。 | [协议测试](../internal/protocol/antigravity_test.go)、[网关测试](../internal/gateway/antigravity_test.go)、[历史存储测试](../internal/store/antigravity_tools_test.go)、[历史验收记录](https://github.com/Sanjeever/model-confluence/commit/bfa71f6f409ff8d02497d022abff228c935ae47d) |
+| 浏览器 OAuth 登录 | 两种供应商支持自动回调与完整 URL 手动提交，授权链接、PKCE、令牌交换与落库已覆盖本地 mock；单次处理、会话隔离、取消、超时和保存失败已验证。Antigravity 曾在 sg1 通过 SSH 补送一次真实授权回调并成功保存账号，只证明该次登录与身份、项目发现成功，不代表模型权限或所有客户端兼容。新的 URL 回填入口仍需真实授权操作验收；不支持设备码、公网自动回调和原位重新登录。回环监听位于进程网络命名空间，普通 Docker 端口发布不能作为自动回调通道。 | [登录会话](../internal/oauthlogin/login.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[运行说明](operations.md#浏览器登录) |
 
 供应商兼容知识应落到协议字段和测试中。以已有火山方舟接入观察为例：Messages 的 `cache_creation_input_tokens` 按该协议映射为缓存写入；Chat / Responses 不能凭其他协议的字段补数。未来供应商改变回包时，以真实样本和对应协议的 usage 定义重新评估，不按供应商名称猜测指标。保留明文 reasoning summary 的转换能力，也不对只含 encrypted_content 的回包承诺等价转换。

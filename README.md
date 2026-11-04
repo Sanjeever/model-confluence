@@ -14,8 +14,7 @@
 - 同协议治理式透传，跨协议支持非流式文本、SSE、图片输入和客户端工具调用；可转换明文推理输出，但不保证思考历史往返。
 - 虚拟模型、有序候选和供应商密钥池统一管理路由，针对可切换的上游错误重试、退避和冷却。
 - 保存请求与上游尝试的载荷、用量和耗时，提供使用记录、性能监控、用量统计和上游健康界面。
-- 支持浏览器登录 Codex 和 Antigravity 添加账号，也可继续导入凭据文件；账号池按需刷新令牌，登录与远程部署方式见[运行说明](docs/operations.md#浏览器登录)。
-- 实验性支持导入 Antigravity OAuth 账号，通过现有三个 API 入口调用订阅后端；接入条件与兼容限制见[运行说明](docs/operations.md#antigravity-oauth)。
+- 支持通过浏览器登录或凭据文件导入 Codex OAuth、Antigravity OAuth 账号，账号池按需刷新令牌；[登录与远程部署](docs/operations.md#浏览器登录)、[Antigravity 实验性接入边界](docs/operations.md#antigravity-oauth)见运行说明。
 - 管理访问密钥、供应商和模型路由，提供供应商模板、真实模型名拉取、虚拟模型连通性测试与密钥运行状态重置。
 
 转换覆盖可明确对应的公共能力；完整能力边界、设计契约及当前差距见 [需求与设计](docs/requirements.md)。不支持多实例共享数据库或多用户管理。
@@ -72,6 +71,7 @@ pnpm dev
 | `internal/admin` | 管理 API、管理员会话、CSRF 与登录限速 |
 | `internal/gateway` | 入站鉴权、路由执行、上游代理与日志收尾 |
 | `internal/protocol` | 三协议请求、响应、usage 与 SSE 转换 |
+| `internal/codex`、`internal/antigravity`、`internal/oauthlogin` | 订阅后端适配、OAuth 凭据与浏览器登录会话 |
 | `internal/store` | SQLite schema、迁移、配置、路由与日志查询 |
 | `web/src`、`internal/webui` | 管理后台源码与静态资源托管 |
 

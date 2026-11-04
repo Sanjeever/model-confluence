@@ -67,7 +67,7 @@ docker compose up -d
 
 ## 运行参数
 
-下表是配置代码的使用说明；命令行参数覆盖对应环境变量，未提供时使用默认值。Go duration 参数使用 `10s`、`5m` 等形式。
+下表对应 [配置定义](../internal/config/config.go)；命令行参数覆盖对应环境变量，未提供时使用默认值。Go duration 参数使用 `10s`、`5m` 等形式。
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -101,7 +101,7 @@ curl.exe http://127.0.0.1:8080/v1/models `
   -H "Authorization: Bearer mc_your_access_key"
 ```
 
-调用 Chat Completions（PowerShell 7）：
+调用 Chat Completions（PowerShell 7.3+，使用[默认原生命令参数传递方式](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_parsing#passing-arguments-that-contain-quote-characters)）：
 
 ```powershell
 curl.exe http://127.0.0.1:8080/v1/chat/completions `
@@ -116,9 +116,9 @@ curl.exe http://127.0.0.1:8080/v1/chat/completions `
 
 ### 浏览器登录
 
-在 OAuth 供应商的账号列表点击「登录添加账号」，在弹窗中打开授权页，在 OpenAI 或 Google 页面完成登录。模汇通过临时回环 HTTP 服务接收回调，在后端交换令牌并写入现有账号池；后台轮询结果，成功后关闭弹窗并刷新账号列表。密码不经过模汇，浏览器和管理 API 不接收上游令牌。
+在 OAuth 供应商的账号列表点击「登录添加账号」，在弹窗中打开授权页，在 OpenAI 或 Google 页面完成登录。成功后弹窗关闭，账号列表刷新。密码不经过模汇；浏览器登录接口返回登录状态与账号 ID，不返回上游令牌。凭据文件导入接口仍会接收文件中的令牌。
 
-远程或 Docker 部署可以直接回填完整回调 URL，无需 SSH 隧道：保持模汇的登录弹窗打开，在供应商页面授权后，如果浏览器提示无法连接 `127.0.0.1`，复制地址栏的完整 URL，返回模汇粘贴到「完整回调 URL」，点击「提交回调」。后端解析授权结果，校验登录归属、回调地址、`state` 和提供的 issuer，再使用原登录会话保存的 PKCE verifier 交换令牌；不会访问提交的 URL。成功、失败和取消继续使用同一套状态查询。回调只可使用一次，过期、已取消或其他登录生成的地址不能提交；不要提交此前已成功使用的旧地址。
+远程或 Docker 部署可以直接回填完整回调 URL，无需 SSH 隧道：保持模汇的登录弹窗打开，在供应商页面授权后，如果浏览器提示无法连接 `127.0.0.1`，复制地址栏的完整 URL，返回模汇粘贴到「完整回调 URL」，点击「提交回调」。后端校验并解析地址，不访问该 URL。回调只可使用一次，过期、已取消或其他登录生成的地址不能提交。
 
 | 供应商 | 临时回调地址 |
 | --- | --- |
@@ -141,16 +141,16 @@ Antigravity 登录仍需配置下文的 OAuth 客户端，并确认它允许表�
 
 ### Antigravity OAuth
 
-此接入为实验性能力，已验证范围见[已知实现差距与兼容边界](requirements.md#17-已知实现差距与兼容边界)。Google 当前[服务条款第 6 条](https://antigravity.google/terms)限制个人订阅通过第三方工具访问，并说明可能暂停或终止 Antigravity、Gemini CLI 账号。接通内部接口不代表官方允许将订阅用于第三方 API 网关。
+此接入为实验性能力，已验证范围见[已知实现差距与兼容边界](requirements.md#17-已知实现差距与兼容边界)。截至 2026-11-04，Google [服务条款第 6 条](https://antigravity.google/terms)禁止通过第三方软件、工具或服务访问，并说明可能暂停或终止 Antigravity、Gemini CLI 账号；企业等接入的适用条款以该页说明为准。接通内部接口不代表官方允许将订阅用于第三方 API 网关。
 
 1. 在运行环境注入上述 OAuth client ID 和 secret。它们必须属于签发 refresh token 的客户端；本项目不内置第三方客户端凭据，不轮流尝试其他客户端。自行注册的新客户端不保证拥有 Antigravity 权限。
 2. 在供应商页创建「Antigravity OAuth（实验性）」供应商，然后导入 Antigravity-Manager 导出的账号 JSON。支持 `{"accounts":[{"email":"user@example.com","refresh_token":"请替换"}]}`、单个账号项及含 `token.refresh_token` 的完整账号文件；可附带 `client_id` 检查绑定。上传限 1 MiB，每个文件最多 100 个账号，批量导入分别返回成功项和失败原因。文件中的身份和项目不作为鉴权依据。
 3. 导入会刷新令牌、验证 Google 身份，并通过 `loadCodeAssist` 查询项目。账号应先在 Antigravity 完成初始化；没有真实项目时明确失败。完整账号文件中的 `oauth_client_key` 是外部应用的本地标识，不能代替 OAuth client ID；缺少 `client_id` 时使用运行配置中的唯一客户端。
 4. 创建虚拟模型候选，选择 Antigravity 上游入口，填写真实模型名及输出 Token 限制。可手动拉取模型目录；不会自动创建路由。客户端继续使用现有 Chat Completions、Responses 或 Messages 入口。
 
-本版本支持文本、SSE、非流式聚合、function 工具定义及工具历史、base64/data URL 图片输入。Antigravity 返回工具调用时，网关先收齐响应并持久化原始内容、签名及调用 ID，再向客户端发送 `call_ag_` 前缀的工具调用 ID。客户端按原协议回传完整 assistant 工具调用和工具结果，网关恢复原始 Part 顺序及 `thoughtSignature`；并行调用须完整保留在同一条 assistant 消息中。此流程支持连续工具调用，不需要客户端回传额外签名字段。
+本版本支持文本、SSE、非流式聚合、function 工具定义及工具历史、base64/data URL 图片输入。网关在工具历史保存成功后返回 `call_ag_` 前缀的调用 ID；客户端按原协议保留响应文本、完整 assistant 工具调用和工具结果，并行调用须完整保留在同一条 assistant 消息中。下一轮由网关恢复上游签名，客户端无需回传额外签名字段。设计原因见[供应商例外](requirements.md#63-严格转换与供应商例外)。
 
-工具历史绑定访问密钥、供应商、账号及真实模型，后续请求只能使用兼容路由。记录保存在独立 SQLite 表中，重启或日志载荷清理后仍保留，不随日志保留天数自动过期。丢失记录、切换访问密钥、修改原响应文本或工具调用、缺少并行调用时明确失败；不能把已有 `call_ag_` 历史迁移到其他账号或模型。
+工具历史绑定访问密钥、供应商、账号及真实模型，后续请求只能使用兼容路由。历史不随日志保留天数自动过期，重启或日志载荷清理后仍保留。丢失记录、切换访问密钥、修改原响应文本或工具调用、缺少并行调用时明确失败。
 
 远程图片 URL、显式推理配置、客户端直接提交的受保护思考历史、Responses 的 custom/shell/apply_patch 工具、`strict:true` 和禁止并行工具的控制暂不支持；无法转换时明确报错，不静默删减。不能据此承诺 Codex、Claude Code 默认参数可直接使用，也不能承诺所有订阅模型均兼容。上游协议、参数校验及终止语义以[请求适配](../internal/protocol/antigravity_request.go)和[响应适配](../internal/protocol/antigravity_response.go)为准。
 

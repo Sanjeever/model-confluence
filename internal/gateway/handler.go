@@ -105,10 +105,8 @@ func (h *Handler) TestModel(ctx context.Context, model, prompt string) (int, []b
 
 var (
 	ErrProviderModelsUnsupported = errors.New("Codex OAuth 不支持模型列表，请手工填写真实模型名")
-	// ErrProviderNoEndpoint 表示供应商没有配置任何协议端点，无法推导模型列表地址。
-	ErrProviderNoEndpoint = errors.New("供应商尚未配置协议端点")
-	// ErrProviderNoKey 表示供应商没有可用的上游密钥。
-	ErrProviderNoKey = errors.New("供应商没有可用的上游密钥")
+	ErrProviderNoEndpoint        = errors.New("供应商尚未配置协议端点")
+	ErrProviderNoKey             = errors.New("供应商没有可用的上游密钥")
 
 	errUpstreamUnauthorized = errors.New("上游密钥未通过鉴权")
 )
@@ -117,8 +115,8 @@ const maxModelsBodyBytes = 8 << 20
 
 var modelsEndpointSuffixes = []string{"/chat/completions", "/responses", "/messages"}
 
-// ListProviderModels 从供应商的模型列表端点拉取真实模型名，供管理后台选择。
-// 地址从已配置的生成端点推导，要求上游提供兼容的模型列表 API。
+// ListProviderModels 从普通供应商的生成端点推导兼容模型列表地址；
+// Antigravity 使用专属元数据接口，Codex 不提供模型列表。
 func (h *Handler) ListProviderModels(ctx context.Context, providerID int64) ([]string, error) {
 	provider, err := h.store.ProviderByID(providerID)
 	if err != nil {

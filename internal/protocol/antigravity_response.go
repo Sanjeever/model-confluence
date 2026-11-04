@@ -273,7 +273,6 @@ func (d *streamDecoder) decodeAntigravity(data []byte) ([]streamEvent, error) {
 	return events, nil
 }
 
-// AntigravityResponse 聚合经过同一解码器校验的上游内容，用于非流式客户端。
 func (c *StreamConverter) AntigravityResponse() (Response, error) {
 	if c.decoder.protocol != Antigravity {
 		return Response{}, fmt.Errorf("不是 Antigravity 响应")
