@@ -25,9 +25,9 @@ export const providerTemplates: Array<{ name: string; chat_completions: string; 
   },
   {
     name: '腾讯云 Token Plan',
-    chat_completions: 'https://api.lkeap.cloud.tencent.com/plan/v3/chat/completions',
-    responses: 'https://api.lkeap.cloud.tencent.com/plan/v3/responses',
-    messages: 'https://api.lkeap.cloud.tencent.com/plan/anthropic/v1/messages',
+    chat_completions: 'https://tokenhub.tencentmaas.com/plan/v3/chat/completions',
+    responses: 'https://tokenhub.tencentmaas.com/plan/v3/responses',
+    messages: 'https://tokenhub.tencentmaas.com/plan/anthropic/v1/messages',
   },
   {
     name: 'DeepSeek',
