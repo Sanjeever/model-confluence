@@ -2,12 +2,79 @@ package protocol
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"unicode/utf8"
 )
 
 const testImageDataURL = "data:image/png;base64,iVBORw0KGgo="
+
+func TestConvertRequestResponsesToolStrictDefaults(t *testing.T) {
+	parameters := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"line_count":{"type":"integer","minimum":1},"start_byte":{"type":"integer","minimum":0},"max_bytes":{"type":"integer","minimum":1}},"required":["path"]}`)
+	for _, from := range []string{Chat, Messages, Responses} {
+		for _, streaming := range []struct {
+			name    string
+			enabled bool
+		}{{"non-stream", false}, {"stream", true}} {
+			for _, strict := range []struct {
+				name  string
+				value *bool
+			}{{"omitted", nil}, {"false", boolPointer(false)}, {"true", boolPointer(true)}} {
+				if from == Messages && strict.value != nil {
+					continue
+				}
+				t.Run(from+"/"+streaming.name+"/"+strict.name, func(t *testing.T) {
+					body, err := EncodeRequest(Request{
+						Model:    "source",
+						Stream:   streaming.enabled,
+						Messages: []Message{{Role: "user", Blocks: []Block{{Type: "text", Text: "Read a file"}}}},
+						Tools:    []Tool{{Kind: "function", Name: "read", Parameters: parameters, Strict: strict.value}},
+					}, from)
+					if err != nil {
+						t.Fatal(err)
+					}
+					converted, err := ConvertRequest(body, from, Responses, "target", 1024)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var got struct {
+						Stream bool `json:"stream"`
+						Tools  []struct {
+							Name       string          `json:"name"`
+							Parameters json.RawMessage `json:"parameters"`
+							Strict     *bool           `json:"strict"`
+						} `json:"tools"`
+					}
+					if err := json.Unmarshal(converted, &got); err != nil {
+						t.Fatal(err)
+					}
+					if got.Stream != streaming.enabled || len(got.Tools) != 1 || got.Tools[0].Name != "read" {
+						t.Fatalf("unexpected Responses request: %s", converted)
+					}
+					want := strict.value
+					if want == nil && from != Responses {
+						want = boolPointer(false)
+					}
+					actual := got.Tools[0].Strict
+					if (actual == nil) != (want == nil) || (actual != nil && want != nil && *actual != *want) {
+						t.Fatalf("unexpected strict setting: %s", converted)
+					}
+					var originalSchema, convertedSchema map[string]any
+					if err := json.Unmarshal(parameters, &originalSchema); err != nil {
+						t.Fatal(err)
+					}
+					if err := json.Unmarshal(got.Tools[0].Parameters, &convertedSchema); err != nil {
+						t.Fatal(err)
+					}
+					if !reflect.DeepEqual(originalSchema, convertedSchema) {
+						t.Fatalf("tool parameter schema changed: %s", converted)
+					}
+				})
+			}
+		}
+	}
+}
 
 func TestConvertRequestResponsesToolCallIDs(t *testing.T) {
 	for _, from := range []string{Chat, Messages} {

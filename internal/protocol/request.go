@@ -15,6 +15,13 @@ func ConvertRequest(body []byte, from, to, upstreamModel string, defaultMaxOutpu
 		return nil, err
 	}
 	request.Model = upstreamModel
+	if to == Responses && from != Responses {
+		for i := range request.Tools {
+			if request.Tools[i].Strict == nil {
+				request.Tools[i].Strict = boolPointer(false)
+			}
+		}
+	}
 	if request.MaxOutputTokens == nil && to == Messages {
 		request.MaxOutputTokens = &defaultMaxOutputTokens
 	}
