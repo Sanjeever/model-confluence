@@ -44,6 +44,8 @@
 
 - 普通后端开发使用占位页；含管理后台的交付必须先构建前端，再使用 `embedded_ui` 标签构建 Go 程序。命令与工具版本来源见运行与开发文档。
 - 发布工作流必须从前端源码生成资源，再测试和构建；不能信任旧产物。发布流程以 `.github/workflows/release.yml` 和 `Dockerfile` 为实现依据。
+- 程序版本以 `web/package.json` 为源，通过 `scripts/version.mjs` 更新和检查。bump 前先编写 `docs/releases/<version>.md`，按上个正式标签以来的用户可见变化整理中文日志，与版本文件一并提交；Release 正文复用该文件。操作步骤见运行与开发文档的「发布」章节。
+- 已公开版本日志保留历史语义，不按当前实现重写；历史版本未纳入仓库日志时继续以对应 GitHub Release 为入口。
 - 凭据只在运行时注入，禁止写入镜像层、工作流或发布产物。
 - 默认分支为 `main`；提交信息使用 Conventional Commits，默认英文。提交前查看状态与 staged diff，排除数据库、密钥、临时文件、依赖目录和本地可执行文件。
 - 发布标签使用 `vX.Y.Z`，必须指向已推送到 `main` 的提交。未经用户明确要求，不创建、移动、覆盖或推送版本标签，不修改已发布 Release，不 amend、rebase、force push 或修改已有历史。

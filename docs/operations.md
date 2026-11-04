@@ -211,6 +211,28 @@ go build -tags embedded_ui -o model-confluence.exe ./cmd/model-confluence
 
 ## 发布
 
-发布由 `vX.Y.Z` Git 标签触发，标签应指向已推送到 `main` 的提交。工作流重新构建前端、运行 Go 测试、构建嵌入后台的二进制归档和多架构容器、生成校验文件并创建 GitHub Release；发布目标、工具版本和构建命令以 [发布工作流](../.github/workflows/release.yml) 与 Dockerfile 为准。
+程序版本以 [web/package.json](../web/package.json) 为源，使用 [版本工具](../scripts/version.mjs) 更新与检查。每次发布前，按上个正式标签至候选提交的代码变化编写 `docs/releases/<version>.md`，使用中文描述用户可见效果，按内容选择新增、改进、修复、升级说明或已知限制等分组，删除空分组。涉及协议转换时说明协议方向和适用场景；涉及配置、持久化或兼容变化时说明必要操作与限制。
+
+在仓库根目录执行以下命令，变量替换为拟发布的新版本号。示例使用 sh 兼容 Shell：
+
+```sh
+next_version='<新版本号>'
+pnpm --dir web bump "$next_version"
+pnpm --dir web check:version "v$next_version"
+pnpm --dir web test:version
+```
+
+`bump` 先检查正式三段数字版本及对应非空日志，再更新版本字段；`check:version` 校验标签、版本文件与日志。工具不会自动提交或创建标签。日志与版本文件应放在同一个发布准备提交中，按改动完成验证后推送至 `main`。
+
+获得发布授权后，在已检查且已推送至 `main` 的提交创建并推送标签：
+
+```sh
+git tag -a "v$next_version" -m "Release v$next_version"
+git push origin "v$next_version"
+```
+
+发布由 `vX.Y.Z` Git 标签触发。工作流先校验版本、日志、目标提交属于 `main` 及 Release 状态，再重新构建前端、运行 Go 测试、构建嵌入后台的二进制归档和多架构容器，并生成校验文件。GitHub Release 正文原样读取仓库版本日志，先创建草稿并上传完整附件，再公开并标记 Latest。失败重跑可继续同版本未公开草稿，已公开版本拒绝覆盖；容器推送发生在 Release 公开前，草稿流程不保证两者同时发布。发布目标、工具版本和构建命令以 [发布工作流](../.github/workflows/release.yml) 与 Dockerfile 为准。
+
+仓库日志从 1.9.4 开始维护，较早版本继续查看 [GitHub Releases](https://github.com/Sanjeever/model-confluence/releases)。已公开日志保留当时语义，后续修复通过新版本交付。
 
 仅在明确执行发布任务时创建和推送版本标签。管理员密码和供应商凭据不进入构建或发布产物，部署时再注入。

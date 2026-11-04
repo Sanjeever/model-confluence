@@ -1,9 +1,12 @@
 {
   "name": "model-confluence-web",
   "private": true,
-  "version": "1.9.3",
+  "version": "1.9.4",
   "type": "module",
   "scripts": {
+    "bump": "node ../scripts/version.mjs bump",
+    "check:version": "node ../scripts/version.mjs check",
+    "test:version": "node --test ../scripts/version.test.mjs",
     "dev": "vite",
     "build": "tsc -b && vite build"
   },

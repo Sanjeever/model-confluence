@@ -77,6 +77,7 @@ pnpm dev
 
 - [需求与设计](docs/requirements.md)：产品边界、领域概念、架构约束、安全取舍与已知实现差距。
 - [运行与开发](docs/operations.md)：部署、配置、调用示例、开发、构建与发布。
+- [更新日志](docs/releases)：按版本记录用户可见变化与升级说明；较早版本见 [GitHub Releases](https://github.com/Sanjeever/model-confluence/releases)。
 - [AGENTS.md](AGENTS.md)：Coding Agent 的事实来源、范围、增量文档影响判断与完成标准。
 
 当前实现、API 行为和配置值以相关代码、schema 和测试为依据；设计意图和长期约束以需求与设计文档为依据。文档中的验收目标不代表全部已实现。
