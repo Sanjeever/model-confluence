@@ -30,6 +30,7 @@ type Config struct {
 	StreamHeartbeatInterval      time.Duration
 	MaxRequestBytes              int64
 	LogRetentionDays             int
+	SessionAffinity              bool
 	AntigravityOAuthClientID     string
 	AntigravityOAuthClientSecret string
 }
@@ -61,6 +62,7 @@ func Load(args []string) (Config, error) {
 		return Config{}, fmt.Errorf("parse MODEL_CONFLUENCE_LOG_RETENTION_DAYS: %w", err)
 	}
 	logRetentionDays := set.Int("log-retention-days", defaultLogRetentionDays, "days to retain full request payloads; 0 keeps them forever")
+	sessionAffinity := set.Bool("session-affinity", false, "pin X-Session-ID requests to a key within each candidate")
 	if err := set.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -95,6 +97,7 @@ func Load(args []string) (Config, error) {
 		StreamHeartbeatInterval:      *streamHeartbeatInterval,
 		MaxRequestBytes:              *maxRequestBytes,
 		LogRetentionDays:             *logRetentionDays,
+		SessionAffinity:              *sessionAffinity,
 		AntigravityOAuthClientID:     os.Getenv("MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_ID"),
 		AntigravityOAuthClientSecret: os.Getenv("MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_SECRET"),
 	}, nil

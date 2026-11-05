@@ -11,6 +11,12 @@ type RoutingEvent struct {
 	Action      string `json:"action"`
 }
 
+func (s *Store) SuccessfulRequestRoute(id string) (int64, int64, error) {
+	var candidateID, keyID int64
+	err := s.db.QueryRow(`SELECT a.candidate_id, a.upstream_key_id FROM attempts a JOIN requests r ON r.id = a.request_id WHERE r.id = ? AND r.status = 'completed' AND a.status = 'completed' ORDER BY a.position DESC LIMIT 1`, id).Scan(&candidateID, &keyID)
+	return candidateID, keyID, err
+}
+
 func (s *Store) SaveRequestRouting(id, replayOf string, decisions []RouteDecision) error {
 	if decisions == nil {
 		decisions = []RouteDecision{}

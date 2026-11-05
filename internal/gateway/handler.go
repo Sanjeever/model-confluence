@@ -39,6 +39,9 @@ type Handler struct {
 	client                  *http.Client
 	candidateMu             sync.Mutex
 	candidates              map[int64]candidateFailure
+	sessionAffinity         bool
+	affinityMu              sync.Mutex
+	affinities              map[affinityKey]affinityBinding
 }
 
 type candidateFailure struct {
@@ -54,7 +57,7 @@ func NewHandler(cfg config.Config, database *store.Store, clientIP *httpx.Client
 		Proxy: http.ProxyFromEnvironment, DialContext: dialer.DialContext, ForceAttemptHTTP2: true,
 		ResponseHeaderTimeout: cfg.ResponseHeaderTimeout, IdleConnTimeout: 90 * time.Second,
 	}
-	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, streamHeartbeatInterval: cfg.StreamHeartbeatInterval, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure), antigravityOAuth: antigravity.OAuthClient{ID: cfg.AntigravityOAuthClientID, Secret: cfg.AntigravityOAuthClientSecret}}
+	return &Handler{store: database, clientIP: clientIP, maxBody: cfg.MaxRequestBytes, streamIdleTimeout: cfg.StreamIdleTimeout, streamHeartbeatInterval: cfg.StreamHeartbeatInterval, client: &http.Client{Transport: transport}, candidates: make(map[int64]candidateFailure), sessionAffinity: cfg.SessionAffinity, antigravityOAuth: antigravity.OAuthClient{ID: cfg.AntigravityOAuthClientID, Secret: cfg.AntigravityOAuthClientSecret}}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
@@ -277,6 +280,15 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		CandidateID: options.CandidateID, UpstreamProtocol: options.UpstreamProtocol,
 	})
 	h.routeCooldowns(decisions)
+	sessionID := strings.TrimSpace(r.Header.Get("X-Session-ID"))
+	if h.sessionAffinity && len(sessionID) > 512 {
+		h.finishError(w, inboundProtocol, requestID, started, 400, "invalid_request", "X-Session-ID 不能超过 512 字节")
+		return
+	}
+	if h.sessionAffinity && sessionID != "" && accessKeyID != nil {
+		h.affinityRoutes(routes, sessionID, *accessKeyID)
+		defer h.rememberAffinity(requestID, sessionID, *accessKeyID, routes)
+	}
 	if logErr := h.store.SaveRequestRouting(requestID, options.ReplayOf, decisions); logErr != nil {
 		h.finishError(w, inboundProtocol, requestID, started, 500, "logging_error", logErr.Error())
 		return
