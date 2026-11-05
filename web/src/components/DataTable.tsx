@@ -167,7 +167,7 @@ export default function DataTable<T>({
                   <TableRow className="hover:bg-transparent">
                     <TableCell
                       colSpan={columns.length + 1}
-                      className="bg-muted/30 p-4"
+                      className="bg-muted/30 p-4 whitespace-normal"
                     >
                       {expanded(row.original)}
                     </TableCell>

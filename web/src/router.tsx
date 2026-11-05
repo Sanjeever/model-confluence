@@ -20,6 +20,7 @@ import CostsPage from './views/CostsPage'
 import HealthPage from './views/HealthPage'
 import AccessKeysPage from './views/AccessKeysPage'
 import ProvidersPage from './views/ProvidersPage'
+import ProviderEditorPage from './views/ProviderEditorPage'
 import ModelsPage from './views/ModelsPage'
 
 const router = createBrowserRouter([{ path: '*', element: <AppRoutes /> }])
@@ -100,6 +101,11 @@ function AppRoutes() {
           <Route path="health" element={<HealthPage />} />
           <Route path="access-keys" element={<AccessKeysPage />} />
           <Route path="providers" element={<ProvidersPage />} />
+          <Route path="providers/new" element={<ProviderEditorPage />} />
+          <Route
+            path="providers/:providerID/edit"
+            element={<ProviderEditorPage />}
+          />
           <Route path="models" element={<ModelsPage />} />
           <Route path="*" element={<Navigate to="/performance" replace />} />
         </Route>
