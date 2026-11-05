@@ -245,7 +245,11 @@ func (h *Handler) listRequests(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	requests, err := h.store.ListRequests(page, pageSize, strings.TrimSpace(r.URL.Query().Get("request_id")), accessKeyID, createdFrom, createdTo)
+	q := r.URL.Query()
+	requests, err := h.store.ListRequests(page, pageSize, strings.TrimSpace(q.Get("request_id")), accessKeyID, createdFrom, createdTo, store.RequestFilters{
+		Status: q.Get("status"), Provider: strings.TrimSpace(q.Get("provider")), VirtualModel: strings.TrimSpace(q.Get("virtual_model")),
+		UpstreamModel: strings.TrimSpace(q.Get("upstream_model")), InboundProtocol: q.Get("inbound_protocol"), UpstreamProtocol: q.Get("upstream_protocol"),
+	})
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

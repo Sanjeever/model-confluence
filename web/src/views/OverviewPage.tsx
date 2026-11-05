@@ -46,6 +46,7 @@ export default function OverviewPage() {
   const pageSize = positiveInteger(params.get('page_size'), 10)
   const requestID = params.get('request_id') ?? ''
   const keyID = params.get('access_key_id') ?? ''
+  const extraFilters = Object.fromEntries(['status', 'provider', 'virtual_model', 'upstream_model', 'inbound_protocol', 'upstream_protocol'].map((key) => [key, params.get(key) ?? '']))
   const { detailID } = useParams()
   const location = useLocation()
   const navigate = useNavigate()
@@ -68,7 +69,7 @@ export default function OverviewPage() {
     queryFn: () => api<AccessKeyOption[]>('/api/admin/access-key-options'),
   })
   const requests = useQuery({
-    queryKey: ['requests', page, pageSize, requestID, keyID, from, to],
+    queryKey: ['requests', page, pageSize, requestID, keyID, from, to, extraFilters],
     queryFn: () => {
       const query = new URLSearchParams({
         page: String(page),
@@ -78,6 +79,7 @@ export default function OverviewPage() {
         created_to: to,
       })
       if (keyID) query.set('access_key_id', keyID)
+      for (const [key, value] of Object.entries(extraFilters)) if (value) query.set(key, value)
       return api<RequestPage>(`/api/admin/requests?${query}`)
     },
     placeholderData: keepPreviousData,
@@ -256,6 +258,15 @@ export default function OverviewPage() {
           className="sm:ml-auto"
         />
       </div>
+      <details className="mb-4 text-xs">
+        <summary className="w-fit cursor-pointer text-muted-foreground">更多筛选{Object.values(extraFilters).some(Boolean) ? ' · 已应用' : ''}</summary>
+        <div className="filter-bar mt-3">
+          <FilterSelect placeholder="状态" value={extraFilters.status} onChange={(value) => update({ status: value, page: '1' })} options={[{ value: 'completed', label: '已完成' }, { value: 'failed', label: '失败' }, { value: 'cancelled', label: '已取消' }, { value: 'in_progress', label: '进行中' }]} />
+          {(['inbound_protocol', 'upstream_protocol'] as const).map((key) => <FilterSelect key={key} placeholder={key === 'inbound_protocol' ? '入站协议' : '上游协议'} value={extraFilters[key]} onChange={(value) => update({ [key]: value, page: '1' })} options={['chat_completions', 'responses', 'messages', ...(key === 'upstream_protocol' ? ['antigravity'] : [])].map((value) => ({ value, label: value }))} />)}
+          {([['provider', '供应商全名'], ['virtual_model', '虚拟模型全名'], ['upstream_model', '真实模型全名']] as const).map(([key, label]) => <SearchField key={`${key}:${extraFilters[key]}`} placeholder={label} value={extraFilters[key]} onChange={(value) => update({ [key]: value, page: '1' })} />)}
+          <Button variant="ghost" size="sm" onClick={() => update({ ...Object.fromEntries(Object.keys(extraFilters).map((key) => [key, ''])), page: '1' })}>清除</Button>
+        </div>
+      </details>
       <ErrorNotice error={requests.error} retry={() => requests.refetch()} />
       <ErrorNotice error={keys.error} retry={() => keys.refetch()} />
       <DataTable

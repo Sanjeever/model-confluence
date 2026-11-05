@@ -239,9 +239,41 @@ type AttemptDetail struct {
 	CompletedAt       *time.Time              `json:"completed_at"`
 }
 
-func (s *Store) ListRequests(page, pageSize int, requestID string, accessKeyID *int64, createdFrom, createdTo time.Time) (RequestPage, error) {
+type RequestFilters struct {
+	Status           string
+	Provider         string
+	VirtualModel     string
+	UpstreamModel    string
+	InboundProtocol  string
+	UpstreamProtocol string
+}
+
+func (s *Store) ListRequests(page, pageSize int, requestID string, accessKeyID *int64, createdFrom, createdTo time.Time, filters ...RequestFilters) (RequestPage, error) {
 	where := "r.created_at >= ? AND r.created_at < ?"
 	args := []any{formatTime(createdFrom), formatTime(createdTo)}
+	if len(filters) > 0 {
+		f := filters[0]
+		for _, item := range []struct{ column, value string }{
+			{"r.status", f.Status}, {"r.virtual_model", f.VirtualModel}, {"r.inbound_protocol", f.InboundProtocol},
+		} {
+			if item.value != "" {
+				where += " AND " + item.column + " = ?"
+				args = append(args, item.value)
+			}
+		}
+		attemptWhere := ""
+		for _, item := range []struct{ column, value string }{
+			{"provider_name", f.Provider}, {"upstream_model", f.UpstreamModel}, {"upstream_protocol", f.UpstreamProtocol},
+		} {
+			if item.value != "" {
+				attemptWhere += " AND a." + item.column + " = ?"
+				args = append(args, item.value)
+			}
+		}
+		if attemptWhere != "" {
+			where += " AND EXISTS (SELECT 1 FROM attempts a WHERE a.request_id = r.id" + attemptWhere + ")"
+		}
+	}
 	if requestID != "" {
 		where += " AND instr(r.id, ?) > 0"
 		args = append(args, requestID)
