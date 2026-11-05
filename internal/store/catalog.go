@@ -89,6 +89,18 @@ type CreateUpstreamKeyInput struct {
 	Enabled   *bool      `json:"enabled"`
 }
 
+func (s *Store) GetProvider(id int64) (Provider, error) {
+	provider, err := scanProvider(s.db.QueryRow(`SELECT id, name, enabled, kind, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE id = ? AND archived_at IS NULL`, id))
+	if err != nil {
+		return Provider{}, err
+	}
+	providers := []Provider{provider}
+	if err := s.hydrateProviders(providers, true); err != nil {
+		return Provider{}, err
+	}
+	return providers[0], nil
+}
+
 func (s *Store) ListProviders() ([]Provider, error) {
 	rows, err := s.db.Query(`SELECT id, name, enabled, kind, auth_type, COALESCE(auth_header, ''), static_headers_json, quota_codes_json, created_at FROM providers WHERE archived_at IS NULL ORDER BY id DESC`)
 	if err != nil {
@@ -700,6 +712,18 @@ type CreateCandidateInput struct {
 	DefaultMaxOutputTokens int                 `json:"default_max_output_tokens"`
 	MaxOutputTokens        int                 `json:"max_output_tokens"`
 	Protocols              []CandidateProtocol `json:"protocols"`
+}
+
+func (s *Store) GetVirtualModel(id int64) (VirtualModel, error) {
+	model, err := scanVirtualModel(s.db.QueryRow(`SELECT id, name, enabled, created_at FROM virtual_models WHERE id = ? AND archived_at IS NULL`, id))
+	if err != nil {
+		return VirtualModel{}, err
+	}
+	models := []VirtualModel{model}
+	if err := s.hydrateVirtualModels(models); err != nil {
+		return VirtualModel{}, err
+	}
+	return models[0], nil
 }
 
 func (s *Store) ListVirtualModels() ([]VirtualModel, error) {

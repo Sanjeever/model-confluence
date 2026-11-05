@@ -67,6 +67,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editAccessKey))))
 	mux.Handle("DELETE /api/admin/access-keys/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteAccessKey))))
 	mux.Handle("GET /api/admin/providers", h.requireSession(http.HandlerFunc(h.listProviders)))
+	mux.Handle("GET /api/admin/providers/{id}", h.requireSession(http.HandlerFunc(h.getProvider)))
 	mux.Handle("GET /api/admin/provider-options", h.requireSession(http.HandlerFunc(h.listProviderOptions)))
 	mux.Handle("GET /api/admin/providers/{id}/models", h.requireSession(http.HandlerFunc(h.providerModels)))
 	mux.Handle("POST /api/admin/providers", h.requireSession(h.requireCSRF(http.HandlerFunc(h.createProvider))))
@@ -74,6 +75,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("PUT /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.editProvider))))
 	mux.Handle("DELETE /api/admin/providers/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.deleteProvider))))
 	mux.Handle("GET /api/admin/models", h.requireSession(http.HandlerFunc(h.listModels)))
+	mux.Handle("GET /api/admin/models/{id}", h.requireSession(http.HandlerFunc(h.getModel)))
 	mux.Handle("POST /api/admin/models", h.requireSession(h.requireCSRF(http.HandlerFunc(h.createModel))))
 	mux.Handle("POST /api/admin/models/{id}/test", h.requireSession(h.requireCSRF(http.HandlerFunc(h.testModel))))
 	mux.Handle("PATCH /api/admin/models/{id}", h.requireSession(h.requireCSRF(http.HandlerFunc(h.updateModel))))
@@ -419,6 +421,20 @@ func (h *Handler) deleteAccessKey(w http.ResponseWriter, r *http.Request) {
 	httpx.WriteJSON(w, http.StatusOK, result)
 }
 
+func (h *Handler) getProvider(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的供应商 ID"})
+		return
+	}
+	provider, err := h.store.GetProvider(id)
+	if err != nil {
+		writeStoreError(w, err, "供应商不存在")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, provider)
+}
+
 func (h *Handler) listProviders(w http.ResponseWriter, r *http.Request) {
 	page, pageSize, ok := paginationQuery(w, r)
 	if !ok {
@@ -521,6 +537,20 @@ func (h *Handler) deleteProvider(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	httpx.WriteJSON(w, http.StatusOK, result)
+}
+
+func (h *Handler) getModel(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": "无效的模型 ID"})
+		return
+	}
+	model, err := h.store.GetVirtualModel(id)
+	if err != nil {
+		writeStoreError(w, err, "模型路由不存在")
+		return
+	}
+	httpx.WriteJSON(w, http.StatusOK, model)
 }
 
 func (h *Handler) listModels(w http.ResponseWriter, r *http.Request) {
