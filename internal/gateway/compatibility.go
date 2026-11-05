@@ -158,6 +158,9 @@ func (h *Handler) CheckCompatibility(ctx context.Context, model string, input Co
 func (h *Handler) runAdminRequest(ctx context.Context, source string, body []byte, options executionOptions, accessKeyID *int64) (int, []byte, string) {
 	path := map[string]string{protocol.Chat: "/v1/chat/completions", protocol.Responses: "/v1/responses", protocol.Messages: "/v1/messages"}[source]
 	r := httptest.NewRequestWithContext(withExecution(ctx, options), "POST", path, bytes.NewReader(body))
+	for key, values := range options.Headers {
+		r.Header[key] = values
+	}
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("User-Agent", "model-confluence-admin-debug")
 	w := httptest.NewRecorder()

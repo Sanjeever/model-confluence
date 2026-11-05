@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"net/http"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/store"
@@ -12,6 +13,7 @@ type executionOptions struct {
 	CandidateID      int64
 	UpstreamProtocol string
 	ReplayOf         string
+	Headers          http.Header
 }
 
 type CandidateCooldown struct {

@@ -29,6 +29,9 @@ import { ProtocolFlow, Status, protocolName, statusName } from './Status'
 import JsonPayload from './JsonPayload'
 import StreamResponseViewer from './StreamResponseViewer'
 import { RouteDecisions } from './RouteDiagnostics'
+import PayloadDiff from './PayloadDiff'
+import RequestReplay from './RequestReplay'
+import { Link } from 'react-router-dom'
 import { cn } from '@/lib/utils'
 
 export { protocolName, statusName }
@@ -97,6 +100,7 @@ export default function RequestDrawer({
             <div className="shrink-0 border-b px-5 py-4">
               <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
                 <Status value={detail.status} />
+                {detail.replay_of && <Link className="text-link text-xs" to={`/requests/${detail.replay_of}`}>原请求</Link>}
                 <code className="text-sm font-medium">
                   {detail.virtual_model || '未指定模型'}
                 </code>
@@ -197,11 +201,13 @@ export default function RequestDrawer({
                   onClick={() => setSelected('response')}
                   icon="out"
                 />
+                <Node label="转换差异" selected={selected === 'diff'} onClick={() => setSelected('diff')} />
+                {!detail.payload_pruned && detail.status !== 'in_progress' && <Node label="调试重放" selected={selected === 'replay'} onClick={() => setSelected('replay')} />}
               </nav>
               <div className="min-w-0 overflow-y-auto p-4 sm:p-5">
                 <div className="mb-4 flex items-center justify-between gap-3">
                   <h2 className="text-sm font-semibold">
-                    {attempt
+                    {selected === 'diff' ? '请求转换差异' : selected === 'replay' ? '调试重放' : attempt
                       ? `上游尝试 ${attempt.position + 1}`
                       : selected === 'response'
                         ? '客户端响应'
@@ -216,7 +222,7 @@ export default function RequestDrawer({
                     {reveal ? '遮罩凭据' : '显示凭据'}
                   </Button>
                 </div>
-                {attempt ? (
+                {selected === 'diff' ? <div className="space-y-5">{detail.attempts.map((a) => <section key={a.id}><h3 className="mb-3 text-xs font-medium">尝试 {a.position + 1} · {a.provider_name} / {a.upstream_model}</h3><PayloadDiff before={detail.request_body} after={a.request_body} /></section>)}</div> : selected === 'replay' ? <RequestReplay key={detail.id} detail={detail} /> : attempt ? (
                   <AttemptPayload
                     key={attempt.id}
                     attempt={attempt}
