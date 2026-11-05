@@ -15,6 +15,13 @@ CREATE TABLE IF NOT EXISTS request_routing (
     events_json TEXT NOT NULL DEFAULT '[]'
 );
 
+CREATE TABLE IF NOT EXISTS compatibility_checks (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    model_id INTEGER NOT NULL REFERENCES virtual_models(id) ON DELETE CASCADE,
+    result_json TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_compatibility_model ON compatibility_checks(model_id, id);
+
 CREATE TABLE IF NOT EXISTS admin (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     password_hash TEXT NOT NULL,

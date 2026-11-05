@@ -19,6 +19,7 @@ import {
 import DataTable from '../components/DataTable'
 import JsonPayload from '../components/JsonPayload'
 import RouteDiagnostics from '../components/RouteDiagnostics'
+import CompatibilityChecks from '../components/CompatibilityChecks'
 import { protocolName } from '../components/Status'
 import {
   ConfirmButton,
@@ -300,6 +301,7 @@ export default function ModelsPage() {
             />
           </div>
           <ErrorNotice error={test.error} />
+          {testing && <CompatibilityChecks key={testing.id} model={testing} />}
           {test.data && (
             <section>
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">

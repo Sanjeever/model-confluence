@@ -42,6 +42,8 @@ func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver, tester ups
 
 func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/admin/routes/explain", h.requireSession(h.requireCSRF(http.HandlerFunc(h.explainRoutes))))
+	mux.Handle("POST /api/admin/models/{id}/checks", h.requireSession(h.requireCSRF(http.HandlerFunc(h.compatibility))))
+	mux.Handle("GET /api/admin/models/{id}/checks", h.requireSession(http.HandlerFunc(h.compatibility)))
 	mux.HandleFunc("POST /api/admin/login", h.login)
 	mux.Handle("GET /api/admin/session", h.requireSession(http.HandlerFunc(h.session)))
 	mux.Handle("POST /api/admin/logout", h.requireSession(h.requireCSRF(http.HandlerFunc(h.logout))))
