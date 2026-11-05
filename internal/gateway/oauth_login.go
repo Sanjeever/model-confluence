@@ -11,9 +11,24 @@ import (
 )
 
 func (h *Handler) OAuthLogin(providerID int64) (oauthlogin.Config, error) {
+	return h.OAuthRelogin(providerID, 0)
+}
+
+func (h *Handler) OAuthRelogin(providerID, keyID int64) (oauthlogin.Config, error) {
 	provider, err := h.store.ProviderByID(providerID)
 	if err != nil {
 		return oauthlogin.Config{}, err
+	}
+	var revision int64
+	if keyID != 0 {
+		for _, key := range provider.Keys {
+			if key.ID == keyID {
+				revision = key.CredentialRevision
+			}
+		}
+		if revision == 0 {
+			return oauthlogin.Config{}, errors.New("账号不属于此供应商或已删除")
+		}
 	}
 	switch provider.Kind {
 	case store.ProviderCodexOAuth:
@@ -23,6 +38,9 @@ func (h *Handler) OAuthLogin(providerID int64) (oauthlogin.Config, error) {
 				return nil, err
 			}
 			return func() (int64, error) {
+				if keyID != 0 {
+					return keyID, h.store.ReplaceOAuthCredential(providerID, keyID, revision, data)
+				}
 				key, err := h.store.ImportOAuthCredential(providerID, "OAuth 登录", data)
 				return key.ID, err
 			}, nil
@@ -37,6 +55,9 @@ func (h *Handler) OAuthLogin(providerID int64) (oauthlogin.Config, error) {
 				return nil, err
 			}
 			return func() (int64, error) {
+				if keyID != 0 {
+					return keyID, h.store.ReplaceAntigravityCredential(providerID, keyID, revision, credential)
+				}
 				key, err := h.store.ImportAntigravityCredential(providerID, "OAuth 登录", credential)
 				return key.ID, err
 			}, nil

@@ -25,6 +25,12 @@ func (h *Handler) startProviderLogin(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	var input struct {
+		KeyID int64 `json:"key_id"`
+	}
+	if r.ContentLength != 0 && !httpx.DecodeJSON(w, r, &input) {
+		return
+	}
 	loginProvider, ok := h.tester.(interface {
 		OAuthLogin(int64) (oauthlogin.Config, error)
 	})
@@ -33,6 +39,16 @@ func (h *Handler) startProviderLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	config, err := loginProvider.OAuthLogin(providerID)
+	if input.KeyID != 0 {
+		relogin, ok := h.tester.(interface {
+			OAuthRelogin(int64, int64) (oauthlogin.Config, error)
+		})
+		if !ok {
+			httpx.WriteJSON(w, 503, map[string]string{"error": "重新登录不可用"})
+			return
+		}
+		config, err = relogin.OAuthRelogin(providerID, input.KeyID)
+	}
 	if err != nil {
 		writeStoreError(w, err, "供应商不存在或登录配置无效")
 		return

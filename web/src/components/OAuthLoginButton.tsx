@@ -32,7 +32,7 @@ const isActive = (status: LoginStatus['status']) =>
 const loginPath = (providerID: number, loginID?: string) =>
   `/api/admin/providers/${providerID}/logins${loginID ? `/${loginID}` : ''}`
 
-export default function OAuthLoginButton({ provider }: { provider: Provider }) {
+export default function OAuthLoginButton({ provider, keyID }: { provider: Provider; keyID?: number }) {
   const [open, setOpen] = useState(false)
   const [login, setLogin] = useState<LoginStatus | null>(null)
   const [callbackURL, setCallbackURL] = useState('')
@@ -57,7 +57,7 @@ export default function OAuthLoginButton({ provider }: { provider: Provider }) {
 
   const start = useMutation({
     mutationFn: () =>
-      api<LoginStatus>(loginPath(provider.id), { method: 'POST' }),
+      api<LoginStatus>(loginPath(provider.id), { method: 'POST', ...(keyID ? { body: JSON.stringify({ key_id: keyID }) } : {}) }),
     onSuccess: (result) => {
       if (!mounted.current) {
         cancelDetached(result)
@@ -144,7 +144,7 @@ export default function OAuthLoginButton({ provider }: { provider: Provider }) {
     <>
       <Button variant="outline" onClick={begin}>
         <LogIn />
-        登录添加账号
+        {keyID ? '重新登录' : '登录添加账号'}
       </Button>
       <Dialog
         open={open}

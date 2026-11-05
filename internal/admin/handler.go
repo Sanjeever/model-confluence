@@ -45,6 +45,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/admin/models/{id}/checks", h.requireSession(h.requireCSRF(http.HandlerFunc(h.compatibility))))
 	mux.Handle("GET /api/admin/models/{id}/checks", h.requireSession(http.HandlerFunc(h.compatibility)))
 	mux.Handle("POST /api/admin/requests/{id}/replay", h.requireSession(h.requireCSRF(http.HandlerFunc(h.replay))))
+	mux.Handle("GET /api/admin/upstream-keys/{id}/limits", h.requireSession(http.HandlerFunc(h.upstreamLimits)))
 	mux.HandleFunc("POST /api/admin/login", h.login)
 	mux.Handle("GET /api/admin/session", h.requireSession(http.HandlerFunc(h.session)))
 	mux.Handle("POST /api/admin/logout", h.requireSession(h.requireCSRF(http.HandlerFunc(h.logout))))

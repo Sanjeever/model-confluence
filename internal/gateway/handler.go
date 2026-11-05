@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"net/http"
@@ -450,6 +451,9 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			continue
 		}
 		firstByte := time.Since(attemptStarted).Milliseconds()
+		if observeErr := h.store.ObserveUpstreamLimits(route, requestID, response.Header); observeErr != nil {
+			slog.Error("记录上游额度信息失败", "request_id", requestID, "error", observeErr)
+		}
 		if response.StatusCode < 200 || response.StatusCode >= 300 {
 			responseBody, readErr := io.ReadAll(response.Body)
 			response.Body.Close()

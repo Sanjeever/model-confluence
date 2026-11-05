@@ -183,6 +183,9 @@ func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, rou
 		return antigravityAttemptResult{err: err}
 	}
 	firstByte := time.Since(attemptStarted).Milliseconds()
+	if observeErr := h.store.ObserveUpstreamLimits(route, requestID, response.Header); observeErr != nil {
+		slog.Error("记录上游额度信息失败", "request_id", requestID, "error", observeErr)
+	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 || !strings.HasPrefix(strings.ToLower(response.Header.Get("Content-Type")), "text/event-stream") {
 		responseBody, readErr := io.ReadAll(response.Body)
 		response.Body.Close()

@@ -5,6 +5,7 @@ import { Loader2, Trash2, Upload } from 'lucide-react'
 import { api, type Provider, type UpstreamKey } from '../api'
 import DataTable from './DataTable'
 import OAuthLoginButton from './OAuthLoginButton'
+import UpstreamLimits from './UpstreamLimits'
 import { Status } from './Status'
 import { ConfirmButton, ErrorNotice, MetaGrid, displayDate } from './console'
 import { Button } from './ui/button'
@@ -131,7 +132,7 @@ export default function OAuthAccounts({ provider }: { provider: Provider }) {
           value={row.original.runtime_status}
           label={
             row.original.runtime_status === 'auth_invalid'
-              ? '需重新导入'
+              ? '需重新登录'
               : undefined
           }
         />
@@ -246,7 +247,7 @@ export default function OAuthAccounts({ provider }: { provider: Provider }) {
         empty="暂无账号"
         minWidth={850}
         expanded={(key) => (
-          <MetaGrid
+          <div className="space-y-4"><OAuthLoginButton provider={provider} keyID={key.id} /><MetaGrid
             items={[
               {
                 label: antigravity ? 'Google 账号 ID' : '工作区 ID',
@@ -268,7 +269,7 @@ export default function OAuthAccounts({ provider }: { provider: Provider }) {
               { label: '恢复时间', value: displayDate(key.recover_at) },
               { label: '状态原因', value: key.runtime_reason },
             ]}
-          />
+          /><UpstreamLimits keyID={key.id} /></div>
         )}
       />
     </div>

@@ -22,6 +22,15 @@ CREATE TABLE IF NOT EXISTS compatibility_checks (
 );
 CREATE INDEX IF NOT EXISTS idx_compatibility_model ON compatibility_checks(model_id, id);
 
+CREATE TABLE IF NOT EXISTS upstream_limits (
+    upstream_key_id INTEGER NOT NULL REFERENCES upstream_keys(id) ON DELETE CASCADE,
+    upstream_model TEXT NOT NULL,
+    request_id TEXT NOT NULL,
+    observed_at TEXT NOT NULL,
+    headers_json TEXT NOT NULL,
+    PRIMARY KEY (upstream_key_id, upstream_model)
+);
+
 CREATE TABLE IF NOT EXISTS admin (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     password_hash TEXT NOT NULL,
