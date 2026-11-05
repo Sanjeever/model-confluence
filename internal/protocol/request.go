@@ -61,7 +61,7 @@ func decodeChatRequest(body []byte) (Request, error) {
 		Tools             json.RawMessage `json:"tools"`
 		ToolChoice        json.RawMessage `json:"tool_choice"`
 		Stream            bool            `json:"stream"`
-		ParallelToolCalls bool            `json:"parallel_tool_calls"`
+		ParallelToolCalls *bool           `json:"parallel_tool_calls"`
 		MaxTokens         *int            `json:"max_tokens"`
 		MaxCompletion     *int            `json:"max_completion_tokens"`
 		Temperature       *float64        `json:"temperature"`
@@ -75,7 +75,11 @@ func decodeChatRequest(body []byte) (Request, error) {
 	if source.Model == "" {
 		return Request{}, errors.New("model is required")
 	}
-	request := Request{Model: source.Model, Stream: source.Stream, ParallelToolCalls: source.ParallelToolCalls, MaxOutputTokens: source.MaxCompletion, Temperature: source.Temperature, TopP: source.TopP, Effort: source.Effort}
+	request := Request{Model: source.Model, Stream: source.Stream, MaxOutputTokens: source.MaxCompletion, Temperature: source.Temperature, TopP: source.TopP, Effort: source.Effort}
+	if source.ParallelToolCalls != nil {
+		request.ParallelToolCalls = *source.ParallelToolCalls
+		request.ParallelToolCallsSet = true
+	}
 	if request.MaxOutputTokens == nil {
 		request.MaxOutputTokens = source.MaxTokens
 	}
@@ -158,7 +162,7 @@ func decodeResponsesRequest(body []byte) (Request, error) {
 		Tools             json.RawMessage `json:"tools"`
 		ToolChoice        json.RawMessage `json:"tool_choice"`
 		Stream            bool            `json:"stream"`
-		ParallelToolCalls bool            `json:"parallel_tool_calls"`
+		ParallelToolCalls *bool           `json:"parallel_tool_calls"`
 		MaxOutputTokens   *int            `json:"max_output_tokens"`
 		Temperature       *float64        `json:"temperature"`
 		TopP              *float64        `json:"top_p"`
@@ -179,7 +183,11 @@ func decodeResponsesRequest(body []byte) (Request, error) {
 	if source.PreviousResponseID != nil || source.Conversation != nil || source.Background || source.Store != nil && *source.Store {
 		return Request{}, errors.New("stateful Responses fields are not supported")
 	}
-	request := Request{Model: source.Model, Stream: source.Stream, ParallelToolCalls: source.ParallelToolCalls, MaxOutputTokens: source.MaxOutputTokens, Temperature: source.Temperature, TopP: source.TopP, Effort: source.Reasoning.Effort}
+	request := Request{Model: source.Model, Stream: source.Stream, MaxOutputTokens: source.MaxOutputTokens, Temperature: source.Temperature, TopP: source.TopP, Effort: source.Reasoning.Effort}
+	if source.ParallelToolCalls != nil {
+		request.ParallelToolCalls = *source.ParallelToolCalls
+		request.ParallelToolCallsSet = true
+	}
 	if len(source.Instructions) > 0 && !bytes.Equal(source.Instructions, []byte("null")) {
 		instruction, err := decodeTextContent(source.Instructions)
 		if err != nil {
@@ -366,7 +374,9 @@ func encodeChatRequest(request Request) ([]byte, error) {
 			tools = append(tools, map[string]any{"type": "function", "function": function})
 		}
 		result["tools"] = tools
-		result["parallel_tool_calls"] = request.ParallelToolCalls
+		if request.ParallelToolCallsSet || request.ParallelToolCalls {
+			result["parallel_tool_calls"] = request.ParallelToolCalls
+		}
 	}
 	if choice := encodeChatToolChoice(request.ToolChoice); choice != nil {
 		result["tool_choice"] = choice
@@ -445,7 +455,9 @@ func encodeResponsesRequest(request Request) ([]byte, error) {
 			tools = append(tools, value)
 		}
 		result["tools"] = tools
-		result["parallel_tool_calls"] = request.ParallelToolCalls
+		if request.ParallelToolCallsSet || request.ParallelToolCalls {
+			result["parallel_tool_calls"] = request.ParallelToolCalls
+		}
 	}
 	if choice := encodeResponsesToolChoice(request.ToolChoice); choice != nil {
 		result["tool_choice"] = choice

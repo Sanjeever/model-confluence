@@ -10,18 +10,19 @@ const (
 )
 
 type Request struct {
-	Model             string
-	Instructions      []string
-	Messages          []Message
-	Tools             []Tool
-	ToolChoice        ToolChoice
-	Stream            bool
-	ParallelToolCalls bool
-	MaxOutputTokens   *int
-	Temperature       *float64
-	TopP              *float64
-	Stop              []string
-	Effort            string
+	Model                string
+	Instructions         []string
+	Messages             []Message
+	Tools                []Tool
+	ToolChoice           ToolChoice
+	Stream               bool
+	ParallelToolCalls    bool
+	ParallelToolCallsSet bool
+	MaxOutputTokens      *int
+	Temperature          *float64
+	TopP                 *float64
+	Stop                 []string
+	Effort               string
 }
 
 type Message struct {

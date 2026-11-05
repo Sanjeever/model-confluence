@@ -10,6 +10,54 @@ import (
 
 const testImageDataURL = "data:image/png;base64,iVBORw0KGgo="
 
+func TestParallelToolControlPresence(t *testing.T) {
+	for _, from := range []string{Chat, Responses} {
+		to := Responses
+		if from == Responses {
+			to = Chat
+		}
+		for _, value := range []string{"omitted", "null", "false", "true"} {
+			t.Run(from+"/"+value, func(t *testing.T) {
+				var body map[string]any
+				base := `{"model":"virtual","messages":[{"role":"user","content":"test"}],"tools":[{"type":"function","function":{"name":"echo","parameters":{"type":"object"}}}]}`
+				if from == Responses {
+					base = `{"model":"virtual","input":"test","tools":[{"type":"function","name":"echo","parameters":{"type":"object"}}]}`
+				}
+				if err := json.Unmarshal([]byte(base), &body); err != nil {
+					t.Fatal(err)
+				}
+				if value != "omitted" {
+					var control any
+					if err := json.Unmarshal([]byte(value), &control); err != nil {
+						t.Fatal(err)
+					}
+					body["parallel_tool_calls"] = control
+				}
+				raw, err := json.Marshal(body)
+				if err != nil {
+					t.Fatal(err)
+				}
+				converted, err := ConvertRequest(raw, from, to, "real", 512)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var output map[string]json.RawMessage
+				if err := json.Unmarshal(converted, &output); err != nil {
+					t.Fatal(err)
+				}
+				control, present := output["parallel_tool_calls"]
+				if value == "omitted" || value == "null" {
+					if present {
+						t.Fatalf("unexpected parallel control: %s", control)
+					}
+				} else if !present || string(control) != value {
+					t.Fatalf("parallel control = %s, expected %s", control, value)
+				}
+			})
+		}
+	}
+}
+
 func TestConvertRequestResponsesToolStrictDefaults(t *testing.T) {
 	parameters := json.RawMessage(`{"type":"object","properties":{"path":{"type":"string"},"start_line":{"type":"integer","minimum":1},"line_count":{"type":"integer","minimum":1},"start_byte":{"type":"integer","minimum":0},"max_bytes":{"type":"integer","minimum":1}},"required":["path"]}`)
 	for _, from := range []string{Chat, Messages, Responses} {
