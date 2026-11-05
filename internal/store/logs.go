@@ -195,6 +195,9 @@ type RequestPage struct {
 
 type RequestDetail struct {
 	RequestSummary
+	ReplayOf         string                  `json:"replay_of"`
+	RouteDecisions   []RouteDecision         `json:"route_decisions"`
+	RoutingEvents    []RoutingEvent          `json:"routing_events"`
 	InboundEndpoint  string                  `json:"inbound_endpoint"`
 	ReasoningEffort  string                  `json:"reasoning_effort"`
 	RequestHeaders   string                  `json:"request_headers"`
@@ -345,6 +348,9 @@ func (s *Store) RequestDetail(id string) (RequestDetail, error) {
 		return RequestDetail{}, err
 	}
 	detail.Attempts = attempts
+	if err := s.requestRouting(&detail); err != nil {
+		return RequestDetail{}, err
+	}
 	return detail, nil
 }
 

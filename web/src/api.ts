@@ -249,6 +249,9 @@ export type AttemptDetail = {
 }
 
 export type RequestDetail = RequestSummary & {
+  replay_of: string
+  route_decisions: RouteDecision[] | null
+  routing_events: Array<{ candidate_id: number; key_id: number; action: string }> | null
   inbound_endpoint: string
   reasoning_effort: string
   request_headers: string
@@ -326,10 +329,23 @@ export type CandidateHealth = {
 }
 
 export type HealthOverview = {
+  candidate_cooldowns: Array<{ candidate_id: number; revision: number; failures: number; recover_at: string; probing: boolean }>
   model_cooldowns: Array<{ upstream_key_id: number; provider_name: string; account_name: string; upstream_model: string; reason: string; recover_at: string }>
   keys: UpstreamKeyHealth[]
   candidates: CandidateHealth[]
   unrouted_models: string[]
   abnormal_key_count: number
   failed_candidates: number
+}
+
+export type RouteDecision = {
+  candidate_id: number
+  revision: number
+  provider: string
+  model: string
+  protocol: string
+  key_id: number
+  key_name: string
+  reason: string
+  recover_at?: string
 }

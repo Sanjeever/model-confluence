@@ -13,15 +13,18 @@ import (
 var ErrNoRoute = errors.New("no eligible route")
 
 type RoutingRequirements struct {
-	VirtualModel  string
-	Protocol      string
-	Stream        bool
-	Tools         bool
-	ParallelTools bool
-	Effort        string
+	VirtualModel     string `json:"virtual_model"`
+	Protocol         string `json:"protocol"`
+	Stream           bool   `json:"stream"`
+	Tools            bool   `json:"tools"`
+	ParallelTools    bool   `json:"parallel_tools"`
+	Effort           string `json:"effort"`
+	CandidateID      int64  `json:"candidate_id"`
+	UpstreamProtocol string `json:"upstream_protocol"`
 }
 
 type ResolvedRoute struct {
+	SkipReason             string
 	VirtualModel           string
 	CandidateID            int64
 	CandidateRevision      int64
@@ -36,29 +39,64 @@ type ResolvedRoute struct {
 }
 
 func (s *Store) ResolveRoutes(requirements RoutingRequirements) ([]ResolvedRoute, error) {
+	routes, _, err := s.ResolveRoutesExplained(requirements)
+	return routes, err
+}
+
+type RouteDecision struct {
+	CandidateID int64      `json:"candidate_id"`
+	Revision    int64      `json:"revision"`
+	Provider    string     `json:"provider"`
+	Model       string     `json:"model"`
+	Protocol    string     `json:"protocol"`
+	KeyID       int64      `json:"key_id"`
+	KeyName     string     `json:"key_name"`
+	Reason      string     `json:"reason"`
+	RecoverAt   *time.Time `json:"recover_at,omitempty"`
+}
+
+func (s *Store) ResolveRoutesExplained(requirements RoutingRequirements) ([]ResolvedRoute, []RouteDecision, error) {
 	templates, err := s.cachedRouteTemplates(requirements)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	routes := make([]ResolvedRoute, 0, len(templates))
+	decisions := make([]RouteDecision, 0, len(templates))
 	for _, route := range templates {
+		d := RouteDecision{CandidateID: route.CandidateID, Revision: route.CandidateRevision, Provider: route.Provider.Name, Model: route.UpstreamModel, Protocol: route.UpstreamProtocol, KeyID: route.Key.ID, KeyName: route.Key.Name, Reason: route.SkipReason, RecoverAt: route.Key.RecoverAt}
+		if d.Reason != "" {
+			decisions = append(decisions, d)
+			continue
+		}
+		if !KeyAvailable(route.Key) {
+			d.Reason = "密钥不可用：" + route.Key.RuntimeStatus
+			if !route.Key.Enabled {
+				d.Reason = "密钥已停用"
+			} else if route.Key.ExpiresAt != nil && time.Now().After(*route.Key.ExpiresAt) {
+				d.Reason = "密钥已过期"
+			}
+			decisions = append(decisions, d)
+			continue
+		}
 		if route.UpstreamProtocol == protocol.Antigravity {
 			available, err := s.antigravityModelAvailable(route.Key.ID, route.Key.CredentialRevision, route.UpstreamModel)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if !available {
+				d.Reason = "账号在此模型上冷却中"
+				decisions = append(decisions, d)
 				continue
 			}
 		}
-		if KeyAvailable(route.Key) {
-			routes = append(routes, route)
-		}
+		d.Reason = "可用"
+		decisions = append(decisions, d)
+		routes = append(routes, route)
 	}
 	if len(routes) == 0 {
-		return nil, ErrNoRoute
+		return nil, decisions, ErrNoRoute
 	}
-	return routes, nil
+	return routes, decisions, nil
 }
 
 func (s *Store) cachedRouteTemplates(requirements RoutingRequirements) ([]ResolvedRoute, error) {
@@ -97,7 +135,7 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 		return nil, err
 	}
 	if !enabled {
-		return nil, nil
+		return []ResolvedRoute{{SkipReason: "虚拟模型已停用"}}, nil
 	}
 	candidates, err := s.modelCandidates(modelID)
 	if err != nil {
@@ -105,11 +143,22 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 	}
 	var routes []ResolvedRoute
 	for _, candidate := range candidates {
+		if requirements.CandidateID != 0 && candidate.ID != requirements.CandidateID {
+			continue
+		}
+		blocked := ResolvedRoute{CandidateID: candidate.ID, CandidateRevision: candidate.ConfigRevision, UpstreamModel: candidate.UpstreamModel, Provider: Provider{Name: candidate.ProviderName}}
 		if !candidate.Enabled || candidate.RuntimeStatus != "available" {
+			blocked.SkipReason = "候选不可用：" + candidate.RuntimeStatus
+			if !candidate.Enabled {
+				blocked.SkipReason = "候选已停用"
+			}
+			routes = append(routes, blocked)
 			continue
 		}
 		protocol, ok := chooseProtocol(candidate.Protocols, requirements)
 		if !ok {
+			blocked.SkipReason = "没有满足流式、工具、并行工具和推理强度要求的协议入口"
+			routes = append(routes, blocked)
 			continue
 		}
 		provider, err := s.providerByID(candidate.ProviderID, true)
@@ -117,13 +166,21 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 			return nil, err
 		}
 		if !provider.Enabled {
+			blocked.SkipReason = "供应商已停用"
+			routes = append(routes, blocked)
 			continue
 		}
 		endpoint := provider.Endpoints[protocol.Protocol]
 		if endpoint == "" {
+			blocked.SkipReason = "未配置上游协议端点"
+			routes = append(routes, blocked)
 			continue
 		}
 		sortKeysByUsage(provider.Keys)
+		if len(provider.Keys) == 0 {
+			blocked.SkipReason = "没有上游密钥或账号"
+			routes = append(routes, blocked)
+		}
 		for _, key := range provider.Keys {
 			routes = append(routes, ResolvedRoute{
 				VirtualModel: requirements.VirtualModel, CandidateID: candidate.ID, CandidateRevision: candidate.ConfigRevision, UpstreamModel: candidate.UpstreamModel, DefaultMaxOutputTokens: candidate.DefaultMaxOutputTokens, MaxOutputTokens: candidate.MaxOutputTokens,
@@ -137,6 +194,9 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 func chooseProtocol(protocols []CandidateProtocol, requirements RoutingRequirements) (CandidateProtocol, bool) {
 	eligible := make([]CandidateProtocol, 0, len(protocols))
 	for _, protocol := range protocols {
+		if requirements.UpstreamProtocol != "" && protocol.Protocol != requirements.UpstreamProtocol {
+			continue
+		}
 		if requirements.Stream && !protocol.SupportsStream || requirements.Tools && !protocol.SupportsTools || requirements.ParallelTools && !protocol.SupportsParallelTools {
 			continue
 		}

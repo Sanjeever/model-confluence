@@ -28,6 +28,7 @@ import {
 import { ProtocolFlow, Status, protocolName, statusName } from './Status'
 import JsonPayload from './JsonPayload'
 import StreamResponseViewer from './StreamResponseViewer'
+import { RouteDecisions } from './RouteDiagnostics'
 import { cn } from '@/lib/utils'
 
 export { protocolName, statusName }
@@ -124,6 +125,7 @@ export default function RequestDrawer({
                   {detail.error_message}
                 </div>
               )}
+              {!!detail.route_decisions?.length && <details className="mt-3 text-xs"><summary className="w-fit cursor-pointer text-muted-foreground">路由决策</summary><div className="mt-3 space-y-2"><RouteDecisions decisions={detail.route_decisions} />{detail.routing_events?.map((event, index) => <p key={index} className="text-muted-foreground">候选 {event.candidate_id} · 密钥 {event.key_id} · {event.action}</p>)}</div></details>}
               <details className="group mt-4">
                 <summary className="flex w-fit cursor-pointer list-none items-center gap-1 text-xs text-muted-foreground">
                   请求信息

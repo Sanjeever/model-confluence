@@ -18,6 +18,7 @@ import {
 } from '../api'
 import DataTable from '../components/DataTable'
 import JsonPayload from '../components/JsonPayload'
+import RouteDiagnostics from '../components/RouteDiagnostics'
 import { protocolName } from '../components/Status'
 import {
   ConfirmButton,
@@ -244,6 +245,7 @@ export default function ModelsPage() {
         minWidth={760}
         expanded={(model) => (
           <div className="divide-y">
+            <div className="pb-4"><RouteDiagnostics model={model.name} /></div>
             {model.candidates.map((candidate) => (
               <div
                 key={candidate.id}

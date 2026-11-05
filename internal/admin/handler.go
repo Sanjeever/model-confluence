@@ -41,6 +41,7 @@ func NewHandler(store *store.Store, clientIP *httpx.ClientIPResolver, tester ups
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
+	mux.Handle("POST /api/admin/routes/explain", h.requireSession(h.requireCSRF(http.HandlerFunc(h.explainRoutes))))
 	mux.HandleFunc("POST /api/admin/login", h.login)
 	mux.Handle("GET /api/admin/session", h.requireSession(http.HandlerFunc(h.session)))
 	mux.Handle("POST /api/admin/logout", h.requireSession(h.requireCSRF(http.HandlerFunc(h.logout))))
@@ -188,7 +189,16 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
 	}
-	httpx.WriteJSON(w, http.StatusOK, health)
+	cooldowns := []gateway.CandidateCooldown{}
+	if live, ok := h.tester.(interface {
+		CandidateCooldowns() []gateway.CandidateCooldown
+	}); ok {
+		cooldowns = live.CandidateCooldowns()
+	}
+	httpx.WriteJSON(w, http.StatusOK, struct {
+		store.HealthOverview
+		CandidateCooldowns []gateway.CandidateCooldown `json:"candidate_cooldowns"`
+	}{health, cooldowns})
 }
 
 func (h *Handler) resetUpstreamKeyRuntime(w http.ResponseWriter, r *http.Request) {

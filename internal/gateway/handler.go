@@ -269,10 +269,17 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		}
 		history[id] = item
 	}
-	routes, err := h.store.ResolveRoutes(store.RoutingRequirements{
+	options, _ := r.Context().Value(executionKey{}).(executionOptions)
+	routes, decisions, err := h.store.ResolveRoutesExplained(store.RoutingRequirements{
 		VirtualModel: requestMeta.Model, Protocol: inboundProtocol, Stream: requestMeta.Stream,
 		Tools: requestMeta.Tools, ParallelTools: requestMeta.ParallelTools, Effort: requestMeta.Effort,
+		CandidateID: options.CandidateID, UpstreamProtocol: options.UpstreamProtocol,
 	})
+	h.routeCooldowns(decisions)
+	if logErr := h.store.SaveRequestRouting(requestID, options.ReplayOf, decisions); logErr != nil {
+		h.finishError(w, inboundProtocol, requestID, started, 500, "logging_error", logErr.Error())
+		return
+	}
 	if err != nil {
 		status := http.StatusInternalServerError
 		code := "gateway_error"
@@ -319,8 +326,16 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	for index := 0; index < len(routes); index++ {
 		route := routes[index]
 		if (index == 0 || routes[index-1].CandidateID != route.CandidateID) && !h.candidateReady(route.CandidateID, route.CandidateRevision) {
+			if err := h.store.AddRoutingEvent(requestID, store.RoutingEvent{CandidateID: route.CandidateID, KeyID: route.Key.ID, Action: "冷却或探测中，跳过候选"}); err != nil {
+				finishError(500, "logging_error", err.Error())
+				return
+			}
 			index = skipCandidate(routes, index, route.CandidateID)
 			continue
+		}
+		if err := h.store.AddRoutingEvent(requestID, store.RoutingEvent{CandidateID: route.CandidateID, KeyID: route.Key.ID, Action: "选择路由"}); err != nil {
+			finishError(500, "logging_error", err.Error())
+			return
 		}
 		if route.Provider.Kind == store.ProviderAntigravityOAuth {
 			result := h.attemptAntigravity(w, r, route, inboundProtocol, requestID, started, body, stream, oauthRetry[route.Key.ID], &position, history)

@@ -8,6 +8,13 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
     applied_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS request_routing (
+    request_id TEXT PRIMARY KEY REFERENCES requests(id) ON DELETE CASCADE,
+    replay_of TEXT NOT NULL DEFAULT '',
+    decisions_json TEXT NOT NULL DEFAULT '[]',
+    events_json TEXT NOT NULL DEFAULT '[]'
+);
+
 CREATE TABLE IF NOT EXISTS admin (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     password_hash TEXT NOT NULL,
