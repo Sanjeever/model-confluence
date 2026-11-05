@@ -1,6 +1,5 @@
 {
   "compilerOptions": {
-    "baseUrl": ".",
     "paths": { "@/*": ["./src/*"] },
     "target": "ES2022",
     "useDefineForClassFields": true,
