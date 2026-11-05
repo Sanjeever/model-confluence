@@ -95,6 +95,27 @@ func TestOAuthCredentialLifecycle(t *testing.T) {
 	if _, err := s.OAuthCredential(key.ID); err != nil {
 		t.Fatal("old failure polluted new credentials", err)
 	}
+	if err := s.SetUpstreamKeyEnabled(key.ID, false); err != nil {
+		t.Fatal(err)
+	}
+	before, err := s.ProviderByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := before.Keys[0].CredentialRevision
+	if err := s.ReplaceOAuthCredential(p.ID, key.ID, revision, oauthTestFile(t)); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.ProviderByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Keys[0].ID != key.ID || after.Keys[0].Enabled || after.Keys[0].CredentialRevision != revision+1 {
+		t.Fatal("relogin changed identity or enabled account")
+	}
+	if err := s.ReplaceOAuthCredential(p.ID, key.ID, revision, oauthTestFile(t)); !errors.Is(err, ErrCredentialChanged) {
+		t.Fatalf("stale relogin: %v", err)
+	}
 	if err := s.DeleteOAuthCredential(p.ID, key.ID); err != nil {
 		t.Fatal(err)
 	}

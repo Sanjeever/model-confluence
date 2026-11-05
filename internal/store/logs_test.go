@@ -1,12 +1,94 @@
 package store
 
 import (
+	"context"
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 )
+
+func TestConsoleLogLifecycle(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "console.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	created := time.Now().UTC().Add(-time.Hour)
+	tx, err := s.db.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	for i := 0; i < 203; i++ {
+		status := "completed"
+		attemptStatus := "completed"
+		if i == 201 {
+			status = "in_progress"
+		}
+		if i == 202 {
+			attemptStatus = "in_progress"
+		}
+		id := fmt.Sprintf("console-%d", i)
+		if _, err := tx.Exec(`INSERT INTO requests(id,status,inbound_protocol,inbound_endpoint,client_ip,request_headers,request_body,created_at,input_tokens) VALUES (?, ?, ?, '/v1/chat/completions', '', '{}', ?, ?, 42)`, id, status, protocol.Chat, []byte(`{"model":"virtual"}`), formatTime(created)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(`INSERT INTO attempts(request_id,position,status,created_at,provider_name,upstream_model,upstream_protocol) VALUES (?,0,?,?,'provider-a','real-a',?)`, id, attemptStatus, formatTime(created), protocol.Chat); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO attempts(request_id,position,status,created_at,provider_name,upstream_model,upstream_protocol) VALUES ('console-0',1,'completed',?,'provider-b','real-b',?)`, formatTime(created), protocol.Messages); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.SaveRequestRouting("console-0", "original", []RouteDecision{{CandidateID: 1, Reason: "可用"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AddRoutingEvent("console-0", RoutingEvent{CandidateID: 1, Action: "选择路由"}); err != nil {
+		t.Fatal(err)
+	}
+	from, to := created.Add(-time.Minute), created.Add(time.Minute)
+	page, err := s.ListRequests(1, 10, "console-0", nil, from, to, RequestFilters{Provider: "provider-a", UpstreamModel: "real-b"})
+	if err != nil || page.Total != 0 {
+		t.Fatalf("filters matched different attempts: %+v, %v", page, err)
+	}
+	count, err := s.PreviewCleanup(context.Background(), from, to, "prune")
+	if err != nil || count != 201 {
+		t.Fatalf("preview = %d, %v", count, err)
+	}
+	result, err := s.CleanupLogs(context.Background(), from, to, "prune")
+	if err != nil || result.Count != 201 {
+		t.Fatalf("prune = %+v, %v", result, err)
+	}
+	detail, err := s.RequestDetail("console-0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !detail.PayloadPruned || detail.RequestBody != "" || detail.InputTokens == nil || *detail.InputTokens != 42 || detail.ReplayOf != "original" || len(detail.RoutingEvents) != 1 {
+		t.Fatalf("prune lost metadata: %+v", detail)
+	}
+	for _, a := range detail.Attempts {
+		if !a.PayloadPruned {
+			t.Fatal("attempt payload not pruned")
+		}
+	}
+	result, err = s.CleanupLogs(context.Background(), from, to, "delete")
+	if err != nil || result.Count != 201 {
+		t.Fatalf("delete = %+v, %v", result, err)
+	}
+	var orphaned int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM request_routing`).Scan(&orphaned); err != nil || orphaned != 0 {
+		t.Fatalf("routing not cascaded: %d %v", orphaned, err)
+	}
+	stats, err := s.StorageStats()
+	if err != nil || stats.RequestCount != 2 || stats.LastCleanup == nil || stats.LastCleanup.Count != 201 {
+		t.Fatalf("storage = %+v, %v", stats, err)
+	}
+}
 
 func TestAttemptTransportAndMigration(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "test.db")

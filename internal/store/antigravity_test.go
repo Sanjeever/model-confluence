@@ -62,6 +62,29 @@ func TestAntigravityCredentialLifecycle(t *testing.T) {
 	if err := s.SaveAntigravityCredential(k.ID, k.CredentialRevision+1, c); !errors.Is(err, ErrCredentialChanged) {
 		t.Fatalf("disabled refresh: %v", err)
 	}
+	before, err := s.ProviderByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := before.Keys[0].CredentialRevision
+	wrong := c
+	wrong.ProjectID = "other-project"
+	if err := s.ReplaceAntigravityCredential(p.ID, k.ID, revision, wrong); !errors.Is(err, ErrCredentialChanged) {
+		t.Fatalf("different project relogin: %v", err)
+	}
+	if err := s.ReplaceAntigravityCredential(p.ID, k.ID, revision, c); err != nil {
+		t.Fatal(err)
+	}
+	after, err := s.ProviderByID(p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Keys[0].Enabled || after.Keys[0].ID != k.ID {
+		t.Fatal("relogin enabled or replaced account")
+	}
+	if err := s.ReplaceAntigravityCredential(p.ID, k.ID, revision, c); !errors.Is(err, ErrCredentialChanged) {
+		t.Fatalf("stale relogin: %v", err)
+	}
 	if err := s.Close(); err != nil {
 		t.Fatal(err)
 	}
