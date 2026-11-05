@@ -34,7 +34,7 @@
 - 协议修改同时考虑流式、非流式、工具调用及下一轮请求历史；首个有效内容发出后不得拼接第二个上游响应。不要将现存转换差距当成新的设计许可。
 - 日志记录模型、Token 口径和凭据明文保存的已接受取舍见需求书。不得擅自改成脱敏管理 API、本地 Token 估算或未授权请求全文记录；普通运行日志、提交信息和示例不得包含真实密钥。
 - 新日志字段应贯通持久化写入、读取、JSON 接口和前端展示；调用上游前必须成功建立 request 与 attempt 记录，不能产生已知的无日志调用。
-- 前端使用现有 React、TypeScript、Ant Design、TanStack Query 和 Tailwind CSS 体系。中文界面保持克制的工业控制台风格，兼容浅色和深色主题；Ant Design 负责交互组件，Tailwind 负责布局和间距。
+- 前端使用 React、TypeScript、shadcn/ui、React Hook Form、TanStack Query / Table 和 Tailwind CSS。交互组件按需维护在 `web/src/components/ui`，不引入第二套组件体系。中文界面采用中性灰与黑白主操作的克制控制台风格，语义颜色与深浅主题统一使用 `web/src/styles.css` 中的变量。
 - 服务端分页、搜索、筛选条件必须进入 TanStack Query 的 `queryKey`，不能只筛当前页。前端源码在 `web/src`，禁止手工编辑 `internal/webui/dist`。
 
 ## 构建、发布与 Git
