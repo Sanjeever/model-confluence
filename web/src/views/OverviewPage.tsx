@@ -19,6 +19,7 @@ import {
 } from '../api'
 import { formatDuration } from '../format'
 import RequestDrawer from '../components/RequestDrawer'
+import StorageManagement from '../components/StorageManagement'
 import DataTable from '../components/DataTable'
 import { Status, ProtocolFlow } from '../components/Status'
 import {
@@ -218,6 +219,7 @@ export default function OverviewPage() {
   return (
     <>
       <PageHeader title="使用记录">
+        <StorageManagement />
         <Button
           variant="outline"
           size="icon"

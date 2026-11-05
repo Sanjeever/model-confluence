@@ -24,11 +24,12 @@ const (
 )
 
 type Handler struct {
-	store    *store.Store
-	clientIP *httpx.ClientIPResolver
-	limiter  *loginLimiter
-	tester   upstreamTester
-	logins   *oauthlogin.Manager
+	store         *store.Store
+	clientIP      *httpx.ClientIPResolver
+	limiter       *loginLimiter
+	tester        upstreamTester
+	logins        *oauthlogin.Manager
+	retentionDays int
 }
 
 type upstreamTester interface {
@@ -46,6 +47,9 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("GET /api/admin/models/{id}/checks", h.requireSession(http.HandlerFunc(h.compatibility)))
 	mux.Handle("POST /api/admin/requests/{id}/replay", h.requireSession(h.requireCSRF(http.HandlerFunc(h.replay))))
 	mux.Handle("GET /api/admin/upstream-keys/{id}/limits", h.requireSession(http.HandlerFunc(h.upstreamLimits)))
+	mux.Handle("GET /api/admin/storage", h.requireSession(http.HandlerFunc(h.storageStatus)))
+	mux.Handle("GET /api/admin/storage/cleanup", h.requireSession(http.HandlerFunc(h.cleanupLogs)))
+	mux.Handle("POST /api/admin/storage/cleanup", h.requireSession(h.requireCSRF(http.HandlerFunc(h.cleanupLogs))))
 	mux.HandleFunc("POST /api/admin/login", h.login)
 	mux.Handle("GET /api/admin/session", h.requireSession(http.HandlerFunc(h.session)))
 	mux.Handle("POST /api/admin/logout", h.requireSession(h.requireCSRF(http.HandlerFunc(h.logout))))

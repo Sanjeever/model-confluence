@@ -20,6 +20,7 @@ const timestampLayout = time.RFC3339Nano
 const sessionTouchInterval = 5 * time.Minute
 
 type Store struct {
+	databasePath      string
 	db                *sql.DB
 	configMu          sync.RWMutex
 	routeLoadMu       sync.Mutex
@@ -47,7 +48,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(8)
-	store := &Store{db: db, routeCache: make(map[RoutingRequirements][]ResolvedRoute), accessKeyCache: make(map[string]AccessKey), lastConfigTouches: make(map[configTouchKey]time.Time)}
+	store := &Store{db: db, databasePath: path, routeCache: make(map[RoutingRequirements][]ResolvedRoute), accessKeyCache: make(map[string]AccessKey), lastConfigTouches: make(map[configTouchKey]time.Time)}
 	if err := store.migrate(); err != nil {
 		db.Close()
 		return nil, err

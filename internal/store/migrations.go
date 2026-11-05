@@ -31,6 +31,12 @@ CREATE TABLE IF NOT EXISTS upstream_limits (
     PRIMARY KEY (upstream_key_id, upstream_model)
 );
 
+CREATE TABLE IF NOT EXISTS storage_maintenance (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    result_json TEXT NOT NULL DEFAULT ''
+);
+INSERT OR IGNORE INTO storage_maintenance(id) VALUES (1);
+
 CREATE TABLE IF NOT EXISTS admin (
     id INTEGER PRIMARY KEY CHECK (id = 1),
     password_hash TEXT NOT NULL,

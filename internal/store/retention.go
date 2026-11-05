@@ -49,6 +49,9 @@ func (s *Store) PruneLogs(ctx context.Context, before time.Time) (int, error) {
 
 		prunedRequests += int(requestRows)
 		if requestRows == 0 && securityRows == 0 {
+			if prunedRequests > 0 {
+				return prunedRequests, s.saveCleanup(CleanupResult{Mode: "retention", Count: int64(prunedRequests), To: before, FinishedAt: time.Now().UTC()})
+			}
 			return prunedRequests, nil
 		}
 	}

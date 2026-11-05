@@ -26,7 +26,9 @@ func New(cfg config.Config, database *store.Store) http.Handler {
 		httpx.WriteJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	gatewayHandler := gateway.NewHandler(cfg, database, clientIP)
-	admin.NewHandler(database, clientIP, gatewayHandler).Register(mux)
+	adminHandler := admin.NewHandler(database, clientIP, gatewayHandler)
+	adminHandler.SetLogRetentionDays(cfg.LogRetentionDays)
+	adminHandler.Register(mux)
 	gatewayHandler.Register(mux)
 	mux.Handle("/", webui.Handler())
 
