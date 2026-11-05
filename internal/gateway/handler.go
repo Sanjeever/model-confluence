@@ -225,6 +225,7 @@ func errorBodySnippet(body []byte) string {
 
 func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inboundProtocol string, accessKeyID *int64, accessKeyName string) {
 	started := time.Now()
+	options, _ := r.Context().Value(executionKey{}).(executionOptions)
 	body, err := readBody(w, r, h.maxBody)
 	if err != nil {
 		return
@@ -246,6 +247,12 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	}); startErr != nil {
 		h.writeError(w, inboundProtocol, http.StatusInternalServerError, "logging_error", startErr.Error(), requestID)
 		return
+	}
+	if options.ReplayOf != "" {
+		if logErr := h.store.SaveRequestRouting(requestID, options.ReplayOf, nil); logErr != nil {
+			h.finishError(w, inboundProtocol, requestID, started, 500, "logging_error", logErr.Error())
+			return
+		}
 	}
 	if err != nil {
 		h.finishError(w, inboundProtocol, requestID, started, http.StatusBadRequest, "invalid_request", err.Error())
@@ -273,7 +280,6 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		}
 		history[id] = item
 	}
-	options, _ := r.Context().Value(executionKey{}).(executionOptions)
 	routes, decisions, err := h.store.ResolveRoutesExplained(store.RoutingRequirements{
 		VirtualModel: requestMeta.Model, Protocol: inboundProtocol, Stream: requestMeta.Stream,
 		Tools: requestMeta.Tools, ParallelTools: requestMeta.ParallelTools, Effort: requestMeta.Effort,

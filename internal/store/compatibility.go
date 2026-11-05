@@ -7,8 +7,18 @@ func (s *Store) SaveCompatibilityCheck(modelID int64, result any) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO compatibility_checks(model_id, result_json) VALUES (?, ?)`, modelID, string(data))
-	return err
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`INSERT INTO compatibility_checks(model_id, result_json) VALUES (?, ?)`, modelID, string(data)); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM compatibility_checks WHERE model_id = ? AND id NOT IN (SELECT id FROM compatibility_checks WHERE model_id = ? ORDER BY id DESC LIMIT 20)`, modelID, modelID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (s *Store) CompatibilityHistory(modelID int64) ([]json.RawMessage, error) {

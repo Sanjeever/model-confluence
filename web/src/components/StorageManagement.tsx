@@ -24,7 +24,7 @@ function StorageContent() {
   const stats = useQuery({ queryKey: ['storage'], queryFn: () => api<Stats>('/api/admin/storage') })
   const preview = useQuery({ queryKey: ['storage-preview', from, to, mode], queryFn: () => api<{ count: number }>(`/api/admin/storage/cleanup?${query}`), enabled: false })
   const cleanup = useMutation({ mutationFn: () => api<Cleanup>(`/api/admin/storage/cleanup?${query}`, { method: 'POST' }), onSuccess: () => {
-    client.invalidateQueries({ queryKey: ['storage'] }); client.invalidateQueries({ queryKey: ['requests'] }); client.invalidateQueries({ queryKey: ['request-detail'] }); client.invalidateQueries({ queryKey: ['performance'] }); client.invalidateQueries({ queryKey: ['usage'] }); client.removeQueries({ queryKey: ['storage-preview'] })
+    client.invalidateQueries({ queryKey: ['storage'] }); client.invalidateQueries({ queryKey: ['requests'] }); client.invalidateQueries({ queryKey: ['request-detail'] }); client.invalidateQueries({ queryKey: ['performance'] }); client.invalidateQueries({ queryKey: ['usage'] }); client.invalidateQueries({ queryKey: ['health'] }); client.removeQueries({ queryKey: ['storage-preview'] })
   } })
   return <div className="space-y-5">
     <ErrorNotice error={stats.error ?? preview.error ?? cleanup.error} />

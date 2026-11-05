@@ -25,7 +25,7 @@ func (s *Store) SaveRequestRouting(id, replayOf string, decisions []RouteDecisio
 	if err != nil {
 		return err
 	}
-	_, err = s.db.Exec(`INSERT INTO request_routing(request_id, replay_of, decisions_json) VALUES (?, ?, ?)`, id, replayOf, string(data))
+	_, err = s.db.Exec(`INSERT INTO request_routing(request_id, replay_of, decisions_json) VALUES (?, ?, ?) ON CONFLICT(request_id) DO UPDATE SET replay_of = excluded.replay_of, decisions_json = excluded.decisions_json`, id, replayOf, string(data))
 	return err
 }
 

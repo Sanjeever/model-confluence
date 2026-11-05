@@ -9,7 +9,7 @@ import { ErrorNotice, displayDate } from './console'
 
 export function RouteDecisions({ decisions }: { decisions: RouteDecision[] }) {
   return <div className="divide-y rounded-md border">{decisions.length ? decisions.map((d, index) => <div key={index} className="grid gap-1 p-3 text-xs sm:grid-cols-2">
-    <span className="font-medium">{d.provider || '模型'} · {d.model || '—'}</span><span className={d.reason === '可用' ? 'text-muted-foreground' : 'text-warning'}>{d.reason}</span>
+    <span className="font-medium">{d.candidate_id ? `#${d.candidate_id} · ` : ''}{d.provider || '模型'} · {d.model || '—'}</span><span className={d.reason === '可用' ? 'text-muted-foreground' : 'text-warning'}>{d.reason}</span>
     <span className="font-mono text-muted-foreground">{d.protocol || '—'}{d.key_id ? ` · ${d.key_name || `密钥 ${d.key_id}`}` : ''}</span><span className="text-muted-foreground">{d.recover_at ? displayDate(d.recover_at) : ''}</span>
   </div>) : <p className="p-3 text-xs text-muted-foreground">没有配置候选</p>}</div>
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/Sanjeever/model-confluence/internal/protocol"
@@ -157,7 +158,14 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 		}
 		protocol, ok := chooseProtocol(candidate.Protocols, requirements)
 		if !ok {
-			blocked.SkipReason = "没有满足流式、工具、并行工具和推理强度要求的协议入口"
+			reasons := []string{}
+			for _, p := range candidate.Protocols {
+				reasons = append(reasons, p.Protocol+": "+strings.Join(protocolMismatch(p, requirements), "、"))
+			}
+			blocked.SkipReason = "没有合格协议入口"
+			if len(reasons) > 0 {
+				blocked.SkipReason += "（" + strings.Join(reasons, "；") + "）"
+			}
 			routes = append(routes, blocked)
 			continue
 		}
@@ -194,13 +202,7 @@ func (s *Store) loadRouteTemplates(requirements RoutingRequirements) ([]Resolved
 func chooseProtocol(protocols []CandidateProtocol, requirements RoutingRequirements) (CandidateProtocol, bool) {
 	eligible := make([]CandidateProtocol, 0, len(protocols))
 	for _, protocol := range protocols {
-		if requirements.UpstreamProtocol != "" && protocol.Protocol != requirements.UpstreamProtocol {
-			continue
-		}
-		if requirements.Stream && !protocol.SupportsStream || requirements.Tools && !protocol.SupportsTools || requirements.ParallelTools && !protocol.SupportsParallelTools {
-			continue
-		}
-		if requirements.Effort != "" && !contains(protocol.EffortLevels, requirements.Effort) {
+		if len(protocolMismatch(protocol, requirements)) > 0 {
 			continue
 		}
 		eligible = append(eligible, protocol)
@@ -214,6 +216,26 @@ func chooseProtocol(protocols []CandidateProtocol, requirements RoutingRequireme
 		return eligible[0], true
 	}
 	return CandidateProtocol{}, false
+}
+
+func protocolMismatch(p CandidateProtocol, r RoutingRequirements) []string {
+	var reasons []string
+	if r.UpstreamProtocol != "" && p.Protocol != r.UpstreamProtocol {
+		reasons = append(reasons, "不是指定上游协议")
+	}
+	if r.Stream && !p.SupportsStream {
+		reasons = append(reasons, "不支持流式")
+	}
+	if r.Tools && !p.SupportsTools {
+		reasons = append(reasons, "不支持工具")
+	}
+	if r.ParallelTools && !p.SupportsParallelTools {
+		reasons = append(reasons, "不支持并行工具")
+	}
+	if r.Effort != "" && !contains(p.EffortLevels, r.Effort) {
+		reasons = append(reasons, "不支持推理强度 "+r.Effort)
+	}
+	return reasons
 }
 
 // ProviderByID 返回供应商完整配置，包含密钥明文，供网关侧管理探测使用。
