@@ -71,6 +71,7 @@ export default function DataTable<T>({
   const table = useReactTable({
     data: visible,
     columns,
+    manualPagination: true,
     getCoreRowModel: getCoreRowModel(),
     getRowId: rowID,
   })
