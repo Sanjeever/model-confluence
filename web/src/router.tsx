@@ -22,6 +22,7 @@ import AccessKeysPage from './views/AccessKeysPage'
 import ProvidersPage from './views/ProvidersPage'
 import ProviderEditorPage from './views/ProviderEditorPage'
 import ModelsPage from './views/ModelsPage'
+import ModelEditorPage from './views/ModelEditorPage'
 
 const router = createBrowserRouter([{ path: '*', element: <AppRoutes /> }])
 
@@ -107,6 +108,8 @@ function AppRoutes() {
             element={<ProviderEditorPage />}
           />
           <Route path="models" element={<ModelsPage />} />
+          <Route path="models/new" element={<ModelEditorPage />} />
+          <Route path="models/:modelID/edit" element={<ModelEditorPage />} />
           <Route path="*" element={<Navigate to="/performance" replace />} />
         </Route>
       </Route>
