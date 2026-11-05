@@ -1,114 +1,338 @@
+import { useMemo } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, App, Button, Card, Col, Empty, Popconfirm, Row, Skeleton, Space, Table, Tag, Typography } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
-import { api, type CandidateHealth, type HealthOverview, type UpstreamKeyHealth } from '../api'
-import MetricCard from '../components/MetricCard'
+import type { ColumnDef } from '@tanstack/react-table'
+import { RefreshCw } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import {
+  api,
+  type CandidateHealth,
+  type HealthOverview,
+  type UpstreamKeyHealth,
+} from '../api'
 import { formatCount } from '../format'
+import DataTable from '../components/DataTable'
+import MetricCard from '../components/MetricCard'
+import { Status } from '../components/Status'
+import {
+  ConfirmButton,
+  ErrorNotice,
+  PageHeader,
+  displayDate,
+} from '../components/console'
+import { Button } from '@/components/ui/button'
 
-const keyStatusMeta: Record<string, { label: string; color: string }> = {
-  available: { label: '可用', color: 'success' },
-  auth_invalid: { label: '鉴权失效', color: 'error' },
-  quota_exhausted: { label: '额度耗尽', color: 'error' },
-  rate_limited: { label: '限流冷却', color: 'warning' },
-}
-
+type ModelCooldown = HealthOverview['model_cooldowns'][number]
 export default function HealthPage() {
-  const { message } = App.useApp()
-  const queryClient = useQueryClient()
+  const client = useQueryClient()
   const health = useQuery({
     queryKey: ['health'],
     queryFn: () => api<HealthOverview>('/api/admin/health'),
     refetchInterval: 10000,
   })
-  const resetRuntime = useMutation({
-    mutationFn: (id: number) => api(`/api/admin/upstream-keys/${id}/reset-runtime`, { method: 'POST' }),
+  const reset = useMutation({
+    mutationFn: (id: number) =>
+      api(`/api/admin/upstream-keys/${id}/reset-runtime`, { method: 'POST' }),
     onSuccess: () => {
-      message.success('密钥运行状态已重置')
-      queryClient.invalidateQueries({ queryKey: ['health'] })
-      queryClient.invalidateQueries({ queryKey: ['providers'] })
+      client.invalidateQueries({ queryKey: ['health'] })
+      client.invalidateQueries({ queryKey: ['providers'] })
     },
-    onError: (error) => message.error(error.message),
   })
-
-  return (
-    <div className="mc-enter mx-auto max-w-[1500px]">
-      <div className="mb-6 flex items-center justify-between gap-3 sm:mb-8">
-        <Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">上游健康</Typography.Title>
-        <Button icon={<ReloadOutlined />} loading={health.isFetching} onClick={() => health.refetch()}>刷新</Button>
-      </div>
-
-      {health.isError && <Alert className="mb-6" type="error" showIcon message="健康数据加载失败" description={(health.error as Error).message} />}
-
-      <Row gutter={[12, 12]}>
-        <Col xs={12} xl={8}><MetricCard label="异常密钥" value={formatCount(health.data?.abnormal_key_count)} opacity={.25} loading={health.isPending} /></Col>
-        <Col xs={12} xl={8}><MetricCard label="候选近期失败" value={formatCount(health.data?.failed_candidates)} opacity={.55} loading={health.isPending} /></Col>
-        <Col xs={12} xl={8}><MetricCard label="无可用路由模型" value={formatCount(health.data?.unrouted_models.length)} opacity={.85} loading={health.isPending} /></Col>
-      </Row>
-
-      <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">密钥池状态</Typography.Title>
-      <Card className="mt-4 overflow-hidden" styles={{ body: { padding: 0 } }}>
-        <Table
-          rowKey="id"
-          loading={health.isPending}
-          dataSource={health.data?.keys ?? []}
-          scroll={{ x: 1000 }}
-          pagination={{ pageSize: 10, showSizeChanger: true, pageSizeOptions: [10, 20, 50] }}
-          locale={{ emptyText: <Empty className="py-14" description="暂无上游密钥" /> }}
-          columns={[
-            { title: '供应商', dataIndex: 'provider_name', render: (value) => <strong>{value}</strong> },
-            { title: '密钥 / 账号', width: 200, render: (_, record) => <span className="min-w-0 break-all">{record.name || `密钥 ${record.position + 1}`}</span> },
-            { title: '状态', width: 120, render: (_, record) => <KeyStatusTag record={record} /> },
-            { title: '恢复时间', dataIndex: 'recover_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
-            { title: '到期时间', width: 170, render: (_, record) => record.provider_kind !== 'generic' ? <span className="text-xs">访问令牌<br />{record.access_token_expires_at ? new Date(record.access_token_expires_at).toLocaleString() : '—'}</span> : record.expires_at ? <span className="font-mono text-xs">{new Date(record.expires_at).toLocaleString()}</span> : '—' },
-            { title: '最后使用', dataIndex: 'last_used_at', width: 170, render: (value) => value ? <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> : '—' },
-            { title: '备注', dataIndex: 'runtime_reason', ellipsis: true, render: (value) => value ? <code className="text-xs">{value}</code> : '—' },
-            { title: '操作', width: 110, align: 'right', render: (_, record) => record.provider_kind !== 'generic' && record.runtime_status === 'auth_invalid' ? <Typography.Text type="secondary">需重新导入</Typography.Text> : record.enabled && record.runtime_status !== 'available' ? <Popconfirm title="立即恢复这把密钥？" description="请确认供应商侧已经恢复额度或服务。" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(record.id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> : '—' },
-          ]}
-        />
-      </Card>
-
-      {!!health.data?.model_cooldowns.length && <>
-        <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">模型冷却</Typography.Title>
-        <Table className="mt-4" rowKey={(item) => `${item.upstream_key_id}:${item.upstream_model}`} dataSource={health.data.model_cooldowns} pagination={false} scroll={{ x: 760 }} columns={[
-          { title: '供应商', dataIndex: 'provider_name' },
-          { title: '账号', dataIndex: 'account_name' },
-          { title: '真实模型', dataIndex: 'upstream_model', render: (value) => <code>{value}</code> },
-          { title: '原因', dataIndex: 'reason' },
-          { title: '恢复时间', dataIndex: 'recover_at', render: (value) => new Date(value).toLocaleString() },
-          { title: '操作', align: 'right', render: (_, item) => <Popconfirm title="清除此账号的模型冷却？" okText="立即恢复" cancelText="取消" onConfirm={() => resetRuntime.mutate(item.upstream_key_id)}><Button type="link" size="small" loading={resetRuntime.isPending}>立即恢复</Button></Popconfirm> },
-        ]} />
-      </>}
-
-      <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">候选近期失败</Typography.Title>
-      <Card className="mt-4 overflow-hidden" styles={{ body: { padding: 0 } }}>
-        <Table
-          rowKey="candidate_id"
-          loading={health.isPending}
-          dataSource={health.data?.candidates ?? []}
-          scroll={{ x: 900 }}
-          pagination={false}
-          locale={{ emptyText: <Empty className="py-14" description="近期没有失败的候选" /> }}
-          columns={[
-            { title: '虚拟模型', dataIndex: 'virtual_model', render: (value) => <code>{value || '—'}</code> },
-            { title: '真实模型', dataIndex: 'upstream_model', render: (value) => <code className="break-all">{value || '—'}</code> },
-            { title: '供应商', dataIndex: 'provider_name', width: 160, render: (value) => value || '—' },
-            { title: '失败次数', dataIndex: 'failed_count', width: 100, align: 'right' },
-            { title: '最近失败时间', dataIndex: 'last_failed_at', width: 170, render: (value) => <span className="font-mono text-xs">{new Date(value).toLocaleString()}</span> },
-            { title: '最近失败原因', dataIndex: 'last_failure', ellipsis: true, render: (value) => <code className="text-xs">{value}</code> },
-          ]}
-        />
-      </Card>
-
-      <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">无可用路由</Typography.Title>
-      <Card className="mt-4" styles={{ body: { padding: 16 } }}>
-        {health.isPending ? <Skeleton active paragraph={{ rows: 1 }} /> : health.data?.unrouted_models.length ? <Space wrap>{health.data.unrouted_models.map((name) => <Tag color="error" key={name}><code>{name}</code></Tag>)}</Space> : <Empty className="py-6" description="所有启用模型当前均有可用路由" />}
-      </Card>
-    </div>
+  const keys = useMemo<ColumnDef<UpstreamKeyHealth>[]>(
+    () => [
+      {
+        accessorKey: 'provider_name',
+        header: '供应商',
+        cell: ({ row }) => (
+          <span className="font-medium">{row.original.provider_name}</span>
+        ),
+      },
+      {
+        accessorKey: 'name',
+        header: '密钥 / 账号',
+        cell: ({ row }) => (
+          <span className="block max-w-44 truncate" title={row.original.name}>
+            {row.original.name || `密钥 ${row.original.position + 1}`}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'enabled',
+        header: '管理员状态',
+        size: 100,
+        cell: ({ row }) => (
+          <span className="text-xs text-muted-foreground">
+            {row.original.enabled ? '已启用' : '已停用'}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'runtime_status',
+        header: '运行状态',
+        size: 110,
+        cell: ({ row }) => <Status value={row.original.runtime_status} />,
+      },
+      {
+        accessorKey: 'recover_at',
+        header: '恢复时间',
+        size: 160,
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums">
+            {displayDate(row.original.recover_at)}
+          </span>
+        ),
+      },
+      {
+        id: 'expires',
+        header: '到期时间',
+        size: 165,
+        cell: ({ row }) => (
+          <div className="text-xs tabular-nums">
+            {displayDate(
+              row.original.provider_kind === 'generic'
+                ? row.original.expires_at
+                : row.original.access_token_expires_at,
+            )}
+            {row.original.provider_kind !== 'generic' && (
+              <span className="mt-1 block text-[11px] text-muted-foreground">
+                访问令牌
+              </span>
+            )}
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'last_used_at',
+        header: '最后使用',
+        size: 160,
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums">
+            {displayDate(row.original.last_used_at)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'runtime_reason',
+        header: '原因',
+        cell: ({ row }) => (
+          <code
+            title={row.original.runtime_reason}
+            className="block max-w-44 truncate text-xs text-muted-foreground"
+          >
+            {row.original.runtime_reason || '—'}
+          </code>
+        ),
+      },
+      {
+        id: 'action',
+        header: '',
+        size: 100,
+        cell: ({ row }) =>
+          row.original.provider_kind !== 'generic' &&
+          row.original.runtime_status === 'auth_invalid' ? (
+            <span className="text-xs text-muted-foreground">需重新导入</span>
+          ) : row.original.enabled &&
+            row.original.runtime_status !== 'available' ? (
+            <ConfirmButton
+              title="重置密钥运行状态？"
+              description="请确认供应商侧已恢复额度或服务。管理员启停状态保持不变。"
+              destructive={false}
+              pending={reset.isPending}
+              onConfirm={() => reset.mutate(row.original.id)}
+            >
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={
+                  reset.isPending && reset.variables === row.original.id
+                }
+              >
+                重置状态
+              </Button>
+            </ConfirmButton>
+          ) : null,
+      },
+    ],
+    [reset.isPending, reset.variables],
   )
-}
-
-function KeyStatusTag({ record }: { record: UpstreamKeyHealth }) {
-  if (!record.enabled) return <Tag>已停用</Tag>
-  const status = keyStatusMeta[record.runtime_status] ?? { label: record.runtime_status, color: 'default' as const }
-  return <Tag color={status.color}>{status.label}</Tag>
+  const candidates = useMemo<ColumnDef<CandidateHealth>[]>(
+    () => [
+      {
+        accessorKey: 'virtual_model',
+        header: '虚拟模型',
+        cell: ({ row }) => (
+          <code className="text-xs">{row.original.virtual_model || '—'}</code>
+        ),
+      },
+      {
+        accessorKey: 'upstream_model',
+        header: '真实模型',
+        cell: ({ row }) => (
+          <code
+            className="block max-w-48 truncate text-xs"
+            title={row.original.upstream_model}
+          >
+            {row.original.upstream_model || '—'}
+          </code>
+        ),
+      },
+      { accessorKey: 'provider_name', header: '供应商' },
+      {
+        accessorKey: 'failed_count',
+        header: '失败次数',
+        size: 90,
+        meta: { align: 'right' },
+      },
+      {
+        accessorKey: 'last_failed_at',
+        header: '最近失败',
+        size: 160,
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums">
+            {displayDate(row.original.last_failed_at)}
+          </span>
+        ),
+      },
+      {
+        accessorKey: 'last_failure',
+        header: '最近失败原因',
+        size: 240,
+        cell: ({ row }) => (
+          <code
+            title={row.original.last_failure}
+            className="block max-w-64 truncate text-xs text-muted-foreground"
+          >
+            {row.original.last_failure}
+          </code>
+        ),
+      },
+    ],
+    [],
+  )
+  const cooldowns = useMemo<ColumnDef<ModelCooldown>[]>(
+    () => [
+      { accessorKey: 'provider_name', header: '供应商' },
+      { accessorKey: 'account_name', header: '账号' },
+      {
+        accessorKey: 'upstream_model',
+        header: '真实模型',
+        cell: ({ row }) => (
+          <code className="text-xs">{row.original.upstream_model}</code>
+        ),
+      },
+      { accessorKey: 'reason', header: '原因' },
+      {
+        accessorKey: 'recover_at',
+        header: '恢复时间',
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums">
+            {displayDate(row.original.recover_at)}
+          </span>
+        ),
+      },
+      {
+        id: 'actions',
+        header: '',
+        size: 100,
+        cell: ({ row }) => (
+          <ConfirmButton
+            title="清除此账号的模型冷却？"
+            description="将重置该账号的运行状态并清除其模型冷却。"
+            destructive={false}
+            pending={reset.isPending}
+            onConfirm={() => reset.mutate(row.original.upstream_key_id)}
+          >
+            <Button size="sm" variant="ghost" disabled={reset.isPending}>
+              重置状态
+            </Button>
+          </ConfirmButton>
+        ),
+      },
+    ],
+    [reset.isPending],
+  )
+  return (
+    <>
+      <PageHeader title="上游健康">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="刷新健康数据"
+          disabled={health.isFetching}
+          onClick={() => health.refetch()}
+        >
+          <RefreshCw className={health.isFetching ? 'animate-spin' : ''} />
+        </Button>
+      </PageHeader>
+      <ErrorNotice error={health.error} retry={() => health.refetch()} />
+      <ErrorNotice error={reset.error} />
+      <div className="metric-strip lg:grid-cols-3">
+        <MetricCard
+          label="异常密钥"
+          value={formatCount(health.data?.abnormal_key_count)}
+          loading={health.isPending}
+        />
+        <MetricCard
+          label="候选近期失败"
+          value={formatCount(health.data?.failed_candidates)}
+          loading={health.isPending}
+        />
+        <MetricCard
+          label="无可用路由模型"
+          value={formatCount(health.data?.unrouted_models.length)}
+          loading={health.isPending}
+        />
+      </div>
+      {!!health.data?.unrouted_models.length && (
+        <section className="mb-6 rounded-md border border-destructive/25 bg-destructive/5 px-4 py-3">
+          <h2 className="mb-2 text-xs font-medium text-destructive">
+            无可用路由
+          </h2>
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            {health.data.unrouted_models.map((name) => (
+              <Link
+                key={name}
+                to={`/models?name=${encodeURIComponent(name)}`}
+                className="text-link font-mono text-xs"
+              >
+                {name}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
+      <section>
+        <h2 className="section-heading">密钥池状态</h2>
+        <DataTable
+          data={health.data?.keys ?? []}
+          columns={keys}
+          rowID={(row) => String(row.id)}
+          loading={health.isPending}
+          fetching={health.isFetching}
+          empty="暂无上游密钥"
+          minWidth={1140}
+        />
+      </section>
+      {!!health.data?.model_cooldowns.length && (
+        <section className="section">
+          <h2 className="section-heading">模型冷却</h2>
+          <DataTable
+            data={health.data.model_cooldowns}
+            columns={cooldowns}
+            rowID={(row) => `${row.upstream_key_id}:${row.upstream_model}`}
+          />
+        </section>
+      )}
+      <section className="section">
+        <h2 className="section-heading">候选近期失败</h2>
+        <DataTable
+          data={health.data?.candidates ?? []}
+          columns={candidates}
+          rowID={(row) => String(row.candidate_id)}
+          loading={health.isPending}
+          empty="近期没有失败的候选"
+          minWidth={960}
+        />
+      </section>
+    </>
+  )
 }

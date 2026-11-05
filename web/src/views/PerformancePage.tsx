@@ -1,111 +1,226 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { useLocation, useNavigate } from 'react-router-dom'
-import { Alert, Button, Card, Col, DatePicker, Empty, Row, Space, Table, Tag, Typography } from 'antd'
-import { ReloadOutlined, SwapRightOutlined } from '@ant-design/icons'
-import dayjs, { type Dayjs } from 'dayjs'
-import { api, type PerformanceOverview } from '../api'
-import { protocolName, statusName } from '../components/RequestDrawer'
-import MetricCard from '../components/MetricCard'
+import { useMemo, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { Link, useLocation } from 'react-router-dom'
+import type { ColumnDef } from '@tanstack/react-table'
+import { RefreshCw } from 'lucide-react'
+import { api, type PerformanceOverview, type PerformanceRequest } from '../api'
 import { formatCount, formatDuration, formatPercent } from '../format'
+import MetricCard from '../components/MetricCard'
+import DataTable from '../components/DataTable'
+import { ProtocolFlow, Status } from '../components/Status'
+import {
+  DateRangePicker,
+  ErrorNotice,
+  PageHeader,
+  displayDate,
+  includesToday,
+  rangeBounds,
+  todayRange,
+} from '../components/console'
+import { Button } from '@/components/ui/button'
 
-const statusItems = [
-  { key: 'completed', label: '已完成', color: '#4d9b72' },
-  { key: 'failed', label: '失败', color: '#c65d4b' },
-  { key: 'cancelled', label: '已取消', color: '#d28a4a' },
-  { key: 'in_progress', label: '进行中', color: '#4d82b5' },
+const statuses = [
+  { key: 'completed', label: '已完成', color: 'var(--success)' },
+  { key: 'failed', label: '失败', color: 'var(--destructive)' },
+  { key: 'cancelled', label: '已取消', color: 'var(--muted-foreground)' },
+  { key: 'in_progress', label: '进行中', color: 'var(--info)' },
 ] as const
-
 export default function PerformancePage() {
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(() => {
-    const today = dayjs().startOf('day')
-    return [today, today]
-  })
-  const navigate = useNavigate()
+  const [range, setRange] = useState(() => todayRange())
   const location = useLocation()
-  const createdFrom = dateRange[0].startOf('day').toISOString()
-  const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
-  const today = dayjs().startOf('day')
-  const shouldPoll = dateRange[0].startOf('day').isBefore(today.add(1, 'day')) && dateRange[1].startOf('day').add(1, 'day').isAfter(today)
+  const [from, to] = rangeBounds(range)
   const performance = useQuery({
-    queryKey: ['performance', createdFrom, createdTo],
-    queryFn: () => api<PerformanceOverview>(`/api/admin/performance?created_from=${encodeURIComponent(createdFrom)}&created_to=${encodeURIComponent(createdTo)}`),
-    refetchInterval: shouldPoll ? 10000 : false,
+    queryKey: ['performance', from, to],
+    queryFn: () =>
+      api<PerformanceOverview>(
+        `/api/admin/performance?${new URLSearchParams({ created_from: from, created_to: to })}`,
+      ),
+    placeholderData: keepPreviousData,
+    refetchInterval: includesToday(range) ? 10000 : false,
   })
-
-  function refresh() {
-    performance.refetch()
-  }
-
-  function openDetail(id: string) {
-    navigate(`/requests/${id}`, { state: { returnTo: location.pathname + location.search } })
-  }
-
   const overview = performance.data
-  const statusCounts = overview?.status_counts ?? { completed: 0, failed: 0, cancelled: 0, in_progress: 0 }
-  return (
-    <div className="mc-enter mx-auto max-w-[1500px]">
-      <div className="mb-6 flex flex-col gap-4 sm:mb-10 lg:flex-row lg:items-end lg:justify-between">
-        <Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">性能监控</Typography.Title>
-        <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
-          <DatePicker.RangePicker aria-label="性能统计时间范围" allowClear={false} format="YYYY-MM-DD" value={dateRange} onChange={(value) => { if (!value?.[0] || !value?.[1]) return; setDateRange([value[0], value[1]]) }} className="w-full sm:w-[260px]" />
-          <Button icon={<ReloadOutlined />} loading={performance.isFetching} onClick={refresh}><span className="hidden sm:inline">刷新</span></Button>
-        </div>
-      </div>
-
-      {performance.isError && <Alert className="mb-6" type="error" showIcon message="性能数据加载失败" description={(performance.error as Error).message} />}
-
-      <Row gutter={[12, 12]}>
-        <Col xs={12} xl={6}><MetricCard label="请求数" value={formatCount(overview?.request_count)} opacity={.25} loading={performance.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="成功率" value={formatPercent(overview?.success_rate)} opacity={.4} loading={performance.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="首内容 P95" value={formatDuration(overview?.first_content_latency.p95)} opacity={.55} loading={performance.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="总耗时 P95" value={formatDuration(overview?.total_latency.p95)} opacity={.7} loading={performance.isPending} /></Col>
-      </Row>
-
-      <Card className="!mt-6" styles={{ body: { padding: 20 } }}>
-        <div className="mb-6 text-sm text-[#7c8d86]">状态分布</div>
-        <div className="flex h-2 overflow-hidden rounded-full bg-black/[.06] dark:bg-white/[.08]">
-          {statusItems.map((item) => {
-            const count = statusCounts[item.key]
-            const width = overview?.request_count ? `${(count / overview.request_count) * 100}%` : '0%'
-            return <div key={item.key} title={`${item.label} ${count}`} style={{ width, backgroundColor: item.color }} />
-          })}
-        </div>
-        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          {statusItems.map((item) => <div key={item.key} className="flex items-center gap-2 text-sm"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: item.color }} /><span className="text-[#7c8d86]">{item.label}</span><strong className="ml-auto font-mono">{formatCount(statusCounts[item.key])}</strong></div>)}
-        </div>
-      </Card>
-
-      <Typography.Title level={4} className="!mb-0 !mt-8 !tracking-[-.03em]">异常与慢请求</Typography.Title>
-
-      <div className="mt-4">
-        <Card className="overflow-hidden" styles={{ body: { padding: 0 } }}>
-          <Table
-            rowKey="id"
-            loading={performance.isPending}
-            dataSource={overview?.attention_requests ?? []}
-            scroll={{ x: 1180 }}
-            onRow={(record) => ({ onClick: () => openDetail(record.id), className: 'cursor-pointer' })}
-            pagination={false}
-            locale={{ emptyText: <Empty className="py-14" description={overview?.request_count ? '所选范围内没有可关注的请求' : '所选时间范围内暂无请求记录'} /> }}
-            columns={[
-              { title: '请求时间', dataIndex: 'created_at', width: 180, render: (value) => new Date(value).toLocaleString() },
-              { title: '模型', dataIndex: 'virtual_model', width: 150, render: (value) => <code>{value || '未指定'}</code> },
-              { title: '上游', width: 220, render: (_, record) => record.provider_name ? <Space direction="vertical" size={0}><strong>{record.provider_name}</strong><code className="break-all text-xs">{record.upstream_model}</code></Space> : '未调用' },
-              { title: '协议', width: 230, render: (_, record) => <Space size={6} className="whitespace-nowrap"><Tag style={{ marginInlineEnd: 0 }}>{protocolName(record.inbound_protocol)}</Tag><SwapRightOutlined className="text-[#7c8d86]" /><Tag color="orange" style={{ marginInlineEnd: 0 }}>{protocolName(record.upstream_protocol)}</Tag></Space> },
-              { title: '状态', width: 110, render: (_, record) => <Tag color={statusColor(record.status)}>{statusName(record.status)}</Tag> },
-              { title: '首内容', dataIndex: 'first_content_ms', width: 100, align: 'right', render: (value) => formatDuration(value) },
-              { title: '总耗时', dataIndex: 'total_ms', width: 100, align: 'right', render: (value) => formatDuration(value) },
-              { title: '响应', width: 230, render: (_, record) => <span className="block max-w-[210px] truncate" title={record.error_message || undefined}>{record.error_message || (record.response_status ? `HTTP ${record.response_status}` : '—')}</span> },
-            ]}
+  const columns = useMemo<ColumnDef<PerformanceRequest>[]>(
+    () => [
+      {
+        accessorKey: 'created_at',
+        header: '请求时间',
+        size: 160,
+        cell: ({ row }) => (
+          <Link
+            className="text-link text-xs tabular-nums"
+            to={`/requests/${row.original.id}`}
+            state={{ returnTo: location.pathname + location.search }}
+          >
+            {displayDate(row.original.created_at)}
+          </Link>
+        ),
+      },
+      {
+        accessorKey: 'virtual_model',
+        header: '模型',
+        cell: ({ row }) => (
+          <code
+            className="block max-w-40 truncate text-xs"
+            title={row.original.virtual_model}
+          >
+            {row.original.virtual_model || '未指定'}
+          </code>
+        ),
+      },
+      {
+        id: 'upstream',
+        header: '上游',
+        cell: ({ row }) => (
+          <div className="max-w-44">
+            <span className="block truncate text-xs">
+              {row.original.provider_name || '未调用'}
+            </span>
+            {row.original.upstream_model && (
+              <code
+                className="mt-1 block truncate text-[11px] text-muted-foreground"
+                title={row.original.upstream_model}
+              >
+                {row.original.upstream_model}
+              </code>
+            )}
+          </div>
+        ),
+      },
+      {
+        id: 'protocol',
+        header: '协议',
+        size: 210,
+        cell: ({ row }) => (
+          <ProtocolFlow
+            inbound={row.original.inbound_protocol}
+            upstream={row.original.upstream_protocol}
           />
-        </Card>
-      </div>
-
-    </div>
+        ),
+      },
+      {
+        accessorKey: 'status',
+        header: '状态',
+        size: 100,
+        cell: ({ row }) => <Status value={row.original.status} />,
+      },
+      {
+        accessorKey: 'first_content_ms',
+        header: '首内容',
+        size: 85,
+        meta: { align: 'right' },
+        cell: ({ row }) => formatDuration(row.original.first_content_ms),
+      },
+      {
+        accessorKey: 'total_ms',
+        header: '总耗时',
+        size: 85,
+        meta: { align: 'right' },
+        cell: ({ row }) => formatDuration(row.original.total_ms),
+      },
+      {
+        id: 'response',
+        header: '响应',
+        size: 210,
+        cell: ({ row }) => (
+          <span
+            title={row.original.error_message || undefined}
+            className={`block max-w-52 truncate text-xs ${row.original.error_message ? 'text-destructive' : 'text-muted-foreground'}`}
+          >
+            {row.original.error_message ||
+              (row.original.response_status
+                ? `HTTP ${row.original.response_status}`
+                : '—')}
+          </span>
+        ),
+      },
+    ],
+    [location.pathname, location.search],
   )
-}
-
-function statusColor(value: string): string | undefined {
-  return ({ completed: 'success', failed: 'error', cancelled: 'warning', in_progress: 'processing' } as Record<string, string>)[value]
+  return (
+    <>
+      <PageHeader title="性能监控">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="刷新性能数据"
+          disabled={performance.isFetching}
+          onClick={() => performance.refetch()}
+        >
+          <RefreshCw className={performance.isFetching ? 'animate-spin' : ''} />
+        </Button>
+      </PageHeader>
+      <div className="filter-bar">
+        <DateRangePicker value={range} onChange={setRange} />
+      </div>
+      <ErrorNotice
+        error={performance.error}
+        retry={() => performance.refetch()}
+      />
+      <div className="metric-strip">
+        <MetricCard
+          label="请求数"
+          value={formatCount(overview?.request_count)}
+          loading={performance.isPending}
+        />
+        <MetricCard
+          label="成功率"
+          value={formatPercent(overview?.success_rate)}
+          loading={performance.isPending}
+        />
+        <MetricCard
+          label="首内容 P95"
+          value={formatDuration(overview?.first_content_latency.p95)}
+          loading={performance.isPending}
+        />
+        <MetricCard
+          label="总耗时 P95"
+          value={formatDuration(overview?.total_latency.p95)}
+          loading={performance.isPending}
+        />
+      </div>
+      <section>
+        <h2 className="section-heading">异常与慢请求</h2>
+        <DataTable
+          data={overview?.attention_requests ?? []}
+          columns={columns}
+          rowID={(row) => row.id}
+          loading={performance.isPending}
+          fetching={performance.isFetching}
+          empty={
+            overview?.request_count
+              ? '所选日期没有异常与慢请求'
+              : '所选日期暂无请求'
+          }
+          minWidth={1080}
+        />
+      </section>
+      <section className="section">
+        <h2 className="section-heading">状态分布</h2>
+        <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+          {statuses.map((item) => (
+            <div
+              key={item.key}
+              title={`${item.label} ${overview?.status_counts[item.key] ?? 0}`}
+              style={{
+                width: overview?.request_count
+                  ? `${(overview.status_counts[item.key] / overview.request_count) * 100}%`
+                  : '0%',
+                backgroundColor: item.color,
+              }}
+            />
+          ))}
+        </div>
+        <div className="mt-3 flex flex-wrap gap-x-6 gap-y-2">
+          {statuses.map((item) => (
+            <div key={item.key} className="flex items-center gap-2">
+              <Status value={item.key} />
+              <span className="text-xs tabular-nums">
+                {formatCount(overview?.status_counts[item.key])}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+    </>
+  )
 }

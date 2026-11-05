@@ -1,105 +1,222 @@
-import { useState } from 'react'
-import { useQuery } from '@tanstack/react-query'
-import { Alert, Button, Card, Col, DatePicker, Empty, Row, Select, Space, Table, Typography } from 'antd'
-import { ReloadOutlined } from '@ant-design/icons'
-import dayjs, { type Dayjs } from 'dayjs'
-import { api, type UsagePage } from '../api'
-import MetricCard from '../components/MetricCard'
+import { useMemo, useState } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import type { ColumnDef } from '@tanstack/react-table'
+import { RefreshCw } from 'lucide-react'
+import { api, type UsagePage, type UsageGroup } from '../api'
 import { formatCount, formatPercent } from '../format'
+import MetricCard from '../components/MetricCard'
+import DataTable from '../components/DataTable'
+import {
+  DateRangePicker,
+  ErrorNotice,
+  FilterSelect,
+  PageHeader,
+  includesToday,
+  rangeBounds,
+  todayRange,
+} from '../components/console'
+import { Button } from '@/components/ui/button'
 
 export default function CostsPage() {
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs]>(() => {
-    const today = dayjs().startOf('day')
-    return [today.subtract(6, 'day'), today]
-  })
-  const [virtualModel, setVirtualModel] = useState('')
-  const createdFrom = dateRange[0].startOf('day').toISOString()
-  const createdTo = dateRange[1].startOf('day').add(1, 'day').toISOString()
-  const today = dayjs().startOf('day')
-  const shouldPoll = dateRange[0].startOf('day').isBefore(today.add(1, 'day')) && dateRange[1].startOf('day').add(1, 'day').isAfter(today)
+  const [range, setRange] = useState(() => todayRange(7))
+  const [model, setModel] = useState('')
+  const [from, to] = rangeBounds(range)
   const usage = useQuery({
-    queryKey: ['usage', createdFrom, createdTo, virtualModel],
+    queryKey: ['usage', from, to, model],
     queryFn: () => {
-      const params = new URLSearchParams({ created_from: createdFrom, created_to: createdTo })
-      if (virtualModel) params.set('virtual_model', virtualModel)
-      return api<UsagePage>(`/api/admin/costs?${params}`)
+      const query = new URLSearchParams({ created_from: from, created_to: to })
+      if (model) query.set('virtual_model', model)
+      return api<UsagePage>(`/api/admin/costs?${query}`)
     },
-    refetchInterval: shouldPoll ? 10000 : false,
+    placeholderData: keepPreviousData,
+    refetchInterval: includesToday(range) ? 10000 : false,
   })
-  const modelNames = useQuery({
+  const models = useQuery({
     queryKey: ['model-names'],
     queryFn: () => api<string[]>('/api/admin/model-names'),
   })
-
   const summary = usage.data?.summary
+  const columns = useMemo<ColumnDef<UsageGroup>[]>(
+    () => [
+      {
+        accessorKey: 'date',
+        header: '日期',
+        size: 110,
+        cell: ({ row }) => (
+          <span className="text-xs tabular-nums">{row.original.date}</span>
+        ),
+      },
+      {
+        accessorKey: 'virtual_model',
+        header: '虚拟模型',
+        cell: ({ row }) => (
+          <code
+            className="block max-w-40 truncate text-xs"
+            title={row.original.virtual_model}
+          >
+            {row.original.virtual_model || '—'}
+          </code>
+        ),
+      },
+      {
+        id: 'upstream',
+        header: '真实模型 / 供应商',
+        size: 180,
+        cell: ({ row }) => (
+          <div className="max-w-44">
+            <code
+              className="block truncate text-xs"
+              title={row.original.upstream_model}
+            >
+              {row.original.upstream_model || '—'}
+            </code>
+            <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+              {row.original.provider_name || '—'}
+            </span>
+          </div>
+        ),
+      },
+      {
+        accessorKey: 'request_count',
+        header: '请求数',
+        size: 75,
+        meta: { align: 'right' },
+        cell: ({ row }) => formatCount(row.original.request_count),
+      },
+      ...(
+        [
+          { key: 'input_tokens', label: '输入' },
+          { key: 'cache_read_tokens', label: '缓存读' },
+          { key: 'cache_write_tokens', label: '缓存写' },
+          { key: 'output_tokens', label: '输出' },
+          { key: 'reasoning_tokens', label: '推理' },
+          { key: 'total_tokens', label: '总计' },
+        ] as const
+      ).map((item): ColumnDef<UsageGroup> => ({
+        id: item.key,
+        header: item.label,
+        size: 90,
+        meta: { align: 'right' },
+        cell: ({ row }) => (
+          <span className={item.key === 'total_tokens' ? 'font-medium' : ''}>
+            {formatCount(row.original.usage[item.key])}
+          </span>
+        ),
+      })),
+      {
+        id: 'cache_share',
+        header: '缓存占比',
+        size: 85,
+        meta: { align: 'right' },
+        cell: ({ row }) =>
+          formatPercent(
+            row.original.usage.input_tokens
+              ? row.original.usage.input_cached_tokens /
+                  row.original.usage.input_tokens
+              : 0,
+          ),
+      },
+    ],
+    [],
+  )
   return (
-    <div className="mc-enter mx-auto max-w-[1500px]">
-      <div className="mb-6 flex flex-col gap-4 sm:mb-10 lg:flex-row lg:items-end lg:justify-between">
-        <Typography.Title level={2} className="!mb-0 !tracking-[-.04em]">用量统计</Typography.Title>
-        <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
-          <DatePicker.RangePicker aria-label="用量统计时间范围" allowClear={false} format="YYYY-MM-DD" value={dateRange} onChange={(value) => { if (!value?.[0] || !value?.[1]) return; setDateRange([value[0], value[1]]) }} className="w-full sm:w-[260px]" />
-          <Select allowClear placeholder="虚拟模型" className="w-full sm:w-[200px]" value={virtualModel || undefined} onChange={(value) => setVirtualModel(value ?? '')} options={modelNames.data?.map((name) => ({ value: name, label: name })) ?? []} />
-          <Button icon={<ReloadOutlined />} loading={usage.isFetching} onClick={() => usage.refetch()}><span className="hidden sm:inline">刷新</span></Button>
-        </div>
+    <>
+      <PageHeader title="用量统计">
+        <Button
+          variant="outline"
+          size="icon"
+          aria-label="刷新用量数据"
+          disabled={usage.isFetching}
+          onClick={() => usage.refetch()}
+        >
+          <RefreshCw className={usage.isFetching ? 'animate-spin' : ''} />
+        </Button>
+      </PageHeader>
+      <div className="filter-bar">
+        <DateRangePicker value={range} onChange={setRange} />
+        <FilterSelect
+          value={model}
+          placeholder="虚拟模型"
+          onChange={setModel}
+          searchable
+          options={
+            models.data?.map((name) => ({ value: name, label: name })) ?? []
+          }
+        />
       </div>
-
-      {usage.isError && <Alert className="mb-6" type="error" showIcon message="用量数据加载失败" description={(usage.error as Error).message} />}
-
-      <Row gutter={[12, 12]}>
-        <Col xs={12} xl={6}><MetricCard label="请求数" value={formatCount(summary?.request_count)} opacity={.25} loading={usage.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="总 Token" value={formatCount(summary?.usage.total_tokens)} opacity={.4} loading={usage.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="输入 Token" value={formatCount(summary?.usage.input_tokens)} opacity={.55} loading={usage.isPending} /></Col>
-        <Col xs={12} xl={6}><MetricCard label="输出 Token" value={formatCount(summary?.usage.output_tokens)} opacity={.7} loading={usage.isPending} /></Col>
-      </Row>
-
-      <Card className="!mt-6" styles={{ body: { padding: 20 } }}>
-        <div className="mb-6 text-sm text-[#7c8d86]">缓存命中</div>
-        <div className="flex h-2 overflow-hidden rounded-full bg-black/[.06] dark:bg-white/[.08]">
-          {(() => {
-            const cached = summary?.usage.input_cached_tokens ?? 0
-            const total = summary?.usage.input_tokens ?? 0
-            const width = total ? `${(cached / total) * 100}%` : '0%'
-            return <div title={`缓存 ${cached}`} style={{ width, backgroundColor: '#4d82b5' }} />
-          })()}
-        </div>
-        <div className="mt-5 grid grid-cols-2 gap-4 sm:grid-cols-4">
-          <CacheItem label="缓存读" value={summary?.usage.cache_read_tokens ?? 0} color="#4d82b5" />
-          <CacheItem label="缓存写" value={summary?.usage.cache_write_tokens ?? 0} color="#4d9b72" />
-          <CacheItem label="推理输出" value={summary?.usage.reasoning_tokens ?? 0} color="#d28a4a" />
-          <CacheItem label="非缓存输入" value={Math.max(0, (summary?.usage.input_tokens ?? 0) - (summary?.usage.input_cached_tokens ?? 0))} color="#7c8d86" />
-        </div>
-      </Card>
-
-      <div>
-        <Card className="mt-6 overflow-hidden" styles={{ body: { padding: 0 } }}>
-          <Table
-            rowKey={(record) => `${record.date}-${record.virtual_model}-${record.upstream_model}`}
-            loading={usage.isPending}
-            dataSource={usage.data?.groups ?? []}
-            scroll={{ x: 1180 }}
-            pagination={{ pageSize: 20, showSizeChanger: true, pageSizeOptions: [10, 20, 50] }}
-            locale={{ emptyText: <Empty className="py-14" description="所选范围内暂无已完成的用量记录" /> }}
-            columns={[
-              { title: '日期', dataIndex: 'date', width: 120, render: (value) => <span className="font-mono">{value}</span> },
-              { title: '虚拟模型', dataIndex: 'virtual_model', width: 160, render: (value) => <code>{value || '—'}</code> },
-              { title: '真实模型', width: 200, render: (_, record) => <Space direction="vertical" size={0}><strong>{record.provider_name || '—'}</strong><code className="break-all text-xs">{record.upstream_model || '—'}</code></Space> },
-              { title: '请求数', dataIndex: 'request_count', width: 90, align: 'right' },
-              { title: '输入', dataIndex: 'usage', width: 110, align: 'right', render: (usage) => formatCount(usage.input_tokens) },
-              { title: '缓存读', dataIndex: 'usage', width: 100, align: 'right', render: (usage) => formatCount(usage.cache_read_tokens) },
-              { title: '缓存写', dataIndex: 'usage', width: 100, align: 'right', render: (usage) => formatCount(usage.cache_write_tokens) },
-              { title: '输出', dataIndex: 'usage', width: 100, align: 'right', render: (usage) => formatCount(usage.output_tokens) },
-              { title: '推理', dataIndex: 'usage', width: 100, align: 'right', render: (usage) => formatCount(usage.reasoning_tokens) },
-              { title: '总计', dataIndex: 'usage', width: 110, align: 'right', render: (usage) => <strong>{formatCount(usage.total_tokens)}</strong> },
-              { title: '缓存占比', dataIndex: 'usage', width: 90, align: 'right', render: (usage) => formatPercent(usage.input_tokens ? usage.input_cached_tokens / usage.input_tokens : 0) },
-            ]}
-          />
-        </Card>
+      <ErrorNotice error={usage.error} retry={() => usage.refetch()} />
+      <ErrorNotice error={models.error} retry={() => models.refetch()} />
+      <div className="metric-strip">
+        <MetricCard
+          label="请求数"
+          value={formatCount(summary?.request_count)}
+          loading={usage.isPending}
+        />
+        <MetricCard
+          label="总 Token"
+          value={formatCount(summary?.usage.total_tokens)}
+          loading={usage.isPending}
+        />
+        <MetricCard
+          label="输入 Token"
+          value={formatCount(summary?.usage.input_tokens)}
+          loading={usage.isPending}
+        />
+        <MetricCard
+          label="输出 Token"
+          value={formatCount(summary?.usage.output_tokens)}
+          loading={usage.isPending}
+        />
       </div>
-
-    </div>
+      <div className="mb-6 flex flex-wrap items-center gap-x-6 gap-y-3 border-b pb-5 text-xs">
+        <div className="flex items-center gap-3">
+          <span className="text-muted-foreground">输入缓存占比</span>
+          <span className="font-medium tabular-nums">
+            {formatPercent(
+              summary
+                ? summary.usage.input_tokens
+                  ? summary.usage.input_cached_tokens /
+                    summary.usage.input_tokens
+                  : 0
+                : undefined,
+            )}
+          </span>
+        </div>
+        <CacheItem label="缓存读" value={summary?.usage.cache_read_tokens} />
+        <CacheItem label="缓存写" value={summary?.usage.cache_write_tokens} />
+        <CacheItem label="推理输出" value={summary?.usage.reasoning_tokens} />
+        <CacheItem
+          label="非缓存输入"
+          value={
+            summary
+              ? Math.max(
+                  0,
+                  summary.usage.input_tokens -
+                    summary.usage.input_cached_tokens,
+                )
+              : undefined
+          }
+        />
+      </div>
+      <DataTable
+        data={usage.data?.groups ?? []}
+        columns={columns}
+        rowID={(row) =>
+          `${row.date}-${row.virtual_model}-${row.upstream_model}`
+        }
+        loading={usage.isPending}
+        fetching={usage.isFetching}
+        empty="所选条件暂无已完成的用量记录"
+        minWidth={1120}
+      />
+    </>
   )
 }
-
-function CacheItem({ label, value, color }: { label: string; value: number; color: string }) {
-  return <div className="flex items-center gap-2 text-sm"><span className="h-2 w-2 rounded-full" style={{ backgroundColor: color }} /><span className="text-[#7c8d86]">{label}</span><strong className="ml-auto font-mono">{formatCount(value)}</strong></div>
+function CacheItem({ label, value }: { label: string; value?: number }) {
+  return (
+    <div className="flex items-center gap-2">
+      <span className="text-muted-foreground">{label}</span>
+      <span className="tabular-nums">{formatCount(value)}</span>
+    </div>
+  )
 }
