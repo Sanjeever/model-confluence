@@ -202,7 +202,12 @@ export default function CostsPage() {
         data={usage.data?.groups ?? []}
         columns={columns}
         rowID={(row) =>
-          `${row.date}-${row.virtual_model}-${row.upstream_model}`
+          JSON.stringify([
+            row.date,
+            row.virtual_model,
+            row.provider_name,
+            row.upstream_model,
+          ])
         }
         loading={usage.isPending}
         fetching={usage.isFetching}

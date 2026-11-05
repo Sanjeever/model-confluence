@@ -193,18 +193,19 @@ export default function ModelsPage() {
   return (
     <>
       <PageHeader title="模型路由">
-        <Button asChild disabled={!providers.data?.length}>
-          <Link
-            to={`/models/new${location.search}`}
-            aria-disabled={!providers.data?.length}
-            onClick={(event) => {
-              if (!providers.data?.length) event.preventDefault()
-            }}
-          >
+        {providers.data?.length ? (
+          <Button asChild>
+            <Link to={`/models/new${location.search}`}>
+              <Plus />
+              新增虚拟模型
+            </Link>
+          </Button>
+        ) : (
+          <Button disabled title="请先创建供应商">
             <Plus />
             新增虚拟模型
-          </Link>
-        </Button>
+          </Button>
+        )}
       </PageHeader>
       <div className="filter-bar">
         <SearchField

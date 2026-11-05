@@ -1,4 +1,4 @@
-import { Fragment, useState, type ReactNode } from 'react'
+import { Fragment, useEffect, useState, type ReactNode } from 'react'
 import {
   flexRender,
   getCoreRowModel,
@@ -54,6 +54,13 @@ export default function DataTable<T>({
   const paginate = !!pagination || (total == null && data.length > 10)
   const count = total ?? data.length
   const pageCount = Math.max(1, Math.ceil(count / paged.pageSize))
+  useEffect(() => {
+    if (!pagination)
+      setLocalPage((previous) => ({
+        ...previous,
+        pageIndex: Math.min(previous.pageIndex, pageCount - 1),
+      }))
+  }, [pageCount, !!pagination])
   const visible =
     !pagination && paginate
       ? data.slice(
