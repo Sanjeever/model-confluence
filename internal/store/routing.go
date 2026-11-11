@@ -232,8 +232,8 @@ func protocolMismatch(p CandidateProtocol, r RoutingRequirements) []string {
 	if r.ParallelTools && !p.SupportsParallelTools {
 		reasons = append(reasons, "不支持并行工具")
 	}
-	if r.Effort != "" && !contains(p.EffortLevels, r.Effort) {
-		reasons = append(reasons, "不支持推理强度 "+r.Effort)
+	if r.Effort != "" && p.Protocol == protocol.Antigravity {
+		reasons = append(reasons, "Antigravity 尚不支持显式推理强度")
 	}
 	return reasons
 }
@@ -395,13 +395,4 @@ func sortKeysByUsage(keys []UpstreamKey) {
 		}
 		return b != nil && a.Before(*b)
 	})
-}
-
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
 }

@@ -656,8 +656,7 @@ function defaultProtocol(
     supports_stream: true,
     supports_tools: true,
     supports_parallel_tools: true,
-    effort_levels:
-      protocol === 'antigravity' ? [] : ['low', 'medium', 'high', 'xhigh'],
+    effort_levels: [],
     supports_stream_usage: protocol === 'chat_completions',
   }
 }

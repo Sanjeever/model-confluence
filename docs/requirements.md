@@ -76,7 +76,7 @@ Codex OAuth 账号通过浏览器登录，或管理员上传原生 ChatGPT `auth
 
 客户端只请求虚拟模型名。每个虚拟模型包含一个有序候选列表，每个候选指向一个供应商和真实模型名。
 
-候选配置管理员启停、输出 Token 默认值与上限，以及有序的协议入口。每个入口声明流式、工具、并行工具、推理强度和 Chat 流式 usage 能力，使路由可以在调用前匹配请求。字段定义见 [Candidate 与 CandidateProtocol](../internal/store/catalog.go)。
+候选配置管理员启停、输出 Token 默认值与上限，以及有序的协议入口。每个入口声明流式、工具、并行工具和 Chat 流式 usage 能力，使路由可以在调用前匹配请求。推理强度原值交由上游校验，已有 `effort_levels` 配置不再参与普通协议路由筛选。字段定义见 [Candidate 与 CandidateProtocol](../internal/store/catalog.go)。
 
 Codex 候选仅允许 Responses 上游协议。两个输出 Token 字段保存为 0，不表示输出长度控制或 Token 上限，管理界面隐藏这些配置。普通候选继续使用原配置规则。
 
@@ -136,14 +136,14 @@ Antigravity 候选仅使用内部 Antigravity 入口，执行候选默认输出 
 - 停止原因；
 - usage 与缓存 Token；
 - 可表达的明文 reasoning/thinking 输出，区分输出展示与历史往返；
-- `low`、`medium`、`high`、`xhigh` 推理强度的等值映射；
+- 推理强度字符串原值传递；
 - 文本增量、工具调用增量、结束和错误事件的 SSE 转换。
 
 Responses 的 `custom`、`shell` 和 `apply_patch` 在目标协议中规范化为具名客户端工具，响应时还原为客户端需要的类型。
 
 Chat Completions / Messages 的工具定义转换到 Responses 时，未声明 `strict` 的工具显式设置 `strict:false`，避免目标端按默认严格模式校验原 schema；Chat Completions 显式提供的 `strict` 值继续保留。依据见 [转换测试](../internal/protocol/request_test.go)。
 
-OpenAI 的 `minimal` 和 Anthropic 的 `max` 不是公共档位。目标入口不支持时必须在调用上游前拒绝，不做就近映射。使用记录同时保存客户端请求值和实际发送值。
+各厂商对推理强度的取值和语义定义不同，网关不维护档位白名单，不做就近映射或别名转换。同协议保留原字段；Chat Completions、Responses 和 Messages 跨协议时，在 `reasoning_effort`、`reasoning.effort` 与 `output_config.effort` 之间转换字段位置并保留字符串原值，由上游判断是否支持，不承诺相同字符串在不同厂商间语义等价。此规则不扩展 Antigravity 专属适配器的能力。使用记录保存客户端请求值，实际发送值可从上游请求载荷查看。
 
 OpenAI 的 system/developer 与 Anthropic 顶层 system 不完全等价。首版只允许对话开头的高优先级指令，按原顺序折叠到目标协议的最高优先级指令区；对话中途出现 system/developer 指令时拒绝。
 
@@ -347,7 +347,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 6. 供应商；
 7. 模型路由。
 
-性能监控页按日期范围展示请求数、成功率、首内容与总耗时 P95、状态分布和异常与慢请求列表。用量统计按日期和模型汇总已完成请求的已知 Token 用量，不做金额估算；查询口径见 [用量聚合](../internal/store/costs.go)。上游健康页分别展示密钥池状态、候选历史失败及网关实时冷却。无可用路由汇总不表示特定请求的能力匹配；模型列表展开后可预演协议、流式、工具和推理强度条件，不调用上游或占用探测。请求详情保存当时的路由快照与选择、冷却跳过事件，实际调用结果通过 attempts 查看；旧记录没有路由快照。
+性能监控页按日期范围展示请求数、成功率、首内容与总耗时 P95、状态分布和异常与慢请求列表。用量统计按日期和模型汇总已完成请求的已知 Token 用量，不做金额估算；查询口径见 [用量聚合](../internal/store/costs.go)。上游健康页分别展示密钥池状态、候选历史失败及网关实时冷却。无可用路由汇总不表示特定请求的能力匹配；模型列表展开后可预演协议、流式、工具和并行工具条件，不调用上游或占用探测。请求详情保存当时的路由快照与选择、冷却跳过事件，实际调用结果通过 attempts 查看；旧记录没有路由快照。
 
 精简安全事件不增加用户/审计管理模块；独立查看视图的范围见第 14 节。
 

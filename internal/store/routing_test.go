@@ -4,7 +4,19 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+
+	"github.com/Sanjeever/model-confluence/internal/protocol"
 )
+
+func TestAntigravityStillRejectsExplicitEffort(t *testing.T) {
+	entry := CandidateProtocol{Protocol: protocol.Antigravity}
+	if reasons := protocolMismatch(entry, RoutingRequirements{}); len(reasons) != 0 {
+		t.Fatalf("unexpected mismatch without effort: %v", reasons)
+	}
+	if reasons := protocolMismatch(entry, RoutingRequirements{Effort: "no_think"}); len(reasons) != 1 || reasons[0] != "Antigravity 尚不支持显式推理强度" {
+		t.Fatalf("unexpected explicit effort mismatch: %v", reasons)
+	}
+}
 
 func TestStaleCandidateFailureDoesNotDisableUpdatedCandidate(t *testing.T) {
 	database, err := Open(filepath.Join(t.TempDir(), "model-confluence.db"))

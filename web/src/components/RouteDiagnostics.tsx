@@ -16,13 +16,11 @@ export function RouteDecisions({ decisions }: { decisions: RouteDecision[] }) {
 
 export default function RouteDiagnostics({ model }: { model: string }) {
   const [protocol, setProtocol] = useState('chat_completions')
-  const [effort, setEffort] = useState('')
   const [flags, setFlags] = useState({ stream: false, tools: false, parallel_tools: false })
-  const explain = useMutation({ mutationFn: () => api<RouteDecision[]>('/api/admin/routes/explain', { method: 'POST', body: JSON.stringify({ virtual_model: model, protocol, effort, ...flags, tools: flags.tools || flags.parallel_tools }) }) })
+  const explain = useMutation({ mutationFn: () => api<RouteDecision[]>('/api/admin/routes/explain', { method: 'POST', body: JSON.stringify({ virtual_model: model, protocol, ...flags, tools: flags.tools || flags.parallel_tools }) }) })
   return <div className="space-y-3">
     <div className="flex flex-wrap items-center gap-3">
       <NativeSelect aria-label="入站协议" value={protocol} onChange={(e) => { setProtocol(e.target.value); explain.reset() }}>{['chat_completions', 'responses', 'messages'].map((p) => <option key={p}>{p}</option>)}</NativeSelect>
-      <NativeSelect aria-label="推理强度" value={effort} onChange={(e) => { setEffort(e.target.value); explain.reset() }}><option value="">无推理强度要求</option>{['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].map((p) => <option key={p}>{p}</option>)}</NativeSelect>
       {([['stream', '流式'], ['tools', '工具'], ['parallel_tools', '并行工具']] as const).map(([key, text]) => <Label key={key} className="flex items-center gap-2"><Switch checked={flags[key]} onCheckedChange={(checked) => { setFlags({ ...flags, [key]: checked }); explain.reset() }} />{text}</Label>)}
       <Button size="sm" variant="outline" disabled={explain.isPending} onClick={() => explain.mutate()}>预演路由</Button>
     </div>

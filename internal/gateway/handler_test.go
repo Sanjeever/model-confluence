@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,9 +14,94 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Sanjeever/model-confluence/internal/httpx"
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 	"github.com/Sanjeever/model-confluence/internal/store"
 )
+
+func TestReasoningEffortReachesUpstream(t *testing.T) {
+	requests := map[string]string{
+		protocol.Chat:      `{"model":"virtual","messages":[{"role":"user","content":"hello"}],"reasoning_effort":%q}`,
+		protocol.Responses: `{"model":"virtual","input":"hello","reasoning":{"effort":%q}}`,
+		protocol.Messages:  `{"model":"virtual","messages":[{"role":"user","content":"hello"}],"max_tokens":100,"output_config":{"effort":%q}}`,
+	}
+	responses := map[string]string{
+		protocol.Chat:      `{"id":"chat_test","model":"hy4","choices":[{"message":{"role":"assistant","content":"hello"},"finish_reason":"stop"}]}`,
+		protocol.Responses: `{"id":"resp_test","model":"hy4","status":"completed","output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello"}]}]}`,
+		protocol.Messages:  `{"id":"msg_test","model":"hy4","role":"assistant","content":[{"type":"text","text":"hello"}],"stop_reason":"end_turn"}`,
+	}
+	for _, target := range []string{protocol.Chat, protocol.Responses, protocol.Messages} {
+		t.Run(target, func(t *testing.T) {
+			received := make(chan requestMetadata, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				metadata, err := inspectRequest(body, target)
+				if err != nil {
+					t.Error(err)
+				}
+				received <- metadata
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = io.WriteString(w, responses[target])
+			}))
+			defer upstream.Close()
+			database, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			provider, err := database.CreateProvider(store.CreateProviderInput{
+				Name: "test", AuthType: "bearer", Endpoints: map[string]string{target: upstream.URL},
+				Keys: []store.CreateUpstreamKeyInput{{Secret: "test-secret"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = database.CreateVirtualModel(store.CreateVirtualModelInput{
+				Name: "virtual", Candidates: []store.CreateCandidateInput{{
+					ProviderID: provider.ID, UpstreamModel: "hy4", DefaultMaxOutputTokens: 100, MaxOutputTokens: 1000,
+					Protocols: []store.CandidateProtocol{{Protocol: target, EffortLevels: []string{"low", "medium", "high", "xhigh"}}},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver, err := httpx.NewClientIPResolver(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			h := &Handler{store: database, client: upstream.Client(), clientIP: resolver, maxBody: 1 << 20}
+			for _, source := range []string{protocol.Chat, protocol.Responses, protocol.Messages} {
+				for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh", "max", "no_think", "default", "ultra", "persistent", "vendor_future"} {
+					t.Run(source+"/"+effort, func(t *testing.T) {
+						body := fmt.Sprintf(requests[source], effort)
+						r := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(body))
+						w := httptest.NewRecorder()
+						h.generateAuthorized(w, r, source, nil, "test")
+						if w.Code != http.StatusOK {
+							t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+						}
+						metadata := <-received
+						if metadata.Model != "hy4" || metadata.Effort != effort {
+							t.Fatalf("unexpected upstream request: %+v", metadata)
+						}
+						detail, err := database.RequestDetail(w.Header().Get("X-Request-ID"))
+						if err != nil {
+							t.Fatal(err)
+						}
+						if detail.ReasoningEffort != effort {
+							t.Fatalf("logged effort=%q, want %q", detail.ReasoningEffort, effort)
+						}
+					})
+				}
+			}
+		})
+	}
+}
 
 func TestCopyRequestHeadersFiltersProxyHeaders(t *testing.T) {
 	source := http.Header{
