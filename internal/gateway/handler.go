@@ -14,6 +14,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sort"
 	"strings"
 	"sync"
@@ -398,6 +399,13 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 		}
 		if requestMeta.Stream && route.UpstreamProtocol == protocol.Chat && route.ProtocolConfig.SupportsStreamUsage {
 			upstreamBody, err = includeStreamUsage(upstreamBody)
+			if err != nil {
+				finishError(http.StatusBadRequest, "invalid_request", err.Error())
+				return
+			}
+		}
+		if !isCodex && route.UpstreamProtocol == protocol.Chat {
+			upstreamBody, err = rewriteGroqReasoning(upstreamBody, route.UpstreamEndpoint)
 			if err != nil {
 				finishError(http.StatusBadRequest, "invalid_request", err.Error())
 				return
@@ -1041,6 +1049,51 @@ func rewriteModel(body []byte, model string) ([]byte, error) {
 	}
 	encoded, _ := json.Marshal(model)
 	value["model"] = encoded
+	return json.Marshal(value)
+}
+
+func rewriteGroqReasoning(body []byte, endpoint string) ([]byte, error) {
+	target, err := url.Parse(endpoint)
+	if err != nil {
+		return nil, err
+	}
+	if !strings.EqualFold(target.Hostname(), "api.groq.com") {
+		return body, nil
+	}
+	var value map[string]json.RawMessage
+	if err := json.Unmarshal(body, &value); err != nil {
+		return nil, err
+	}
+	var messages []map[string]json.RawMessage
+	if err := json.Unmarshal(value["messages"], &messages); err != nil {
+		return nil, err
+	}
+	changed := false
+	for _, message := range messages {
+		reasoning, ok := message["reasoning_content"]
+		if !ok {
+			continue
+		}
+		var role string
+		if err := json.Unmarshal(message["role"], &role); err != nil {
+			return nil, err
+		}
+		if role != "assistant" {
+			continue
+		}
+		if _, exists := message["reasoning"]; !exists {
+			message["reasoning"] = reasoning
+		}
+		delete(message, "reasoning_content")
+		changed = true
+	}
+	if !changed {
+		return body, nil
+	}
+	value["messages"], err = json.Marshal(messages)
+	if err != nil {
+		return nil, err
+	}
 	return json.Marshal(value)
 }
 

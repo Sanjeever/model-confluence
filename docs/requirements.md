@@ -180,6 +180,8 @@ Responses 转换保持无状态，避免让供应商会话标识变成网关隐�
 
 思考内容不属于可丢弃例外。明文推理输出可以用于展示，但不证明历史回传等价；客户端显式要求目标协议无法提供的 thinking/reasoning 内容时必须在调用上游前拒绝。signature、redacted_thinking 和 encrypted content 不得伪造为其他协议字段。当前兼容行为与设计差距见第 17 节。
 
+Groq Chat Completions 按上游端点主机 `api.groq.com` 识别，在发送前将 assistant 历史消息中的 `reasoning_content` 改名为 `reasoning`。已有 `reasoning` 时保留原值并移除 `reasoning_content`。适配作用于当前候选的上游请求副本，入站日志与后备候选保留原文，上游尝试日志保存实际发送载荷；此规则不扩大跨协议思考历史的支持范围。依据见 [网关实现](../internal/gateway/handler.go) 与 [回归测试](../internal/gateway/handler_test.go)。
+
 Antigravity 工具调用的 `thoughtSignature` 作为该供应商的原始状态保存在独立工具历史中，不映射为其他协议的思考签名。网关在正常结束及持久化成功后输出普通工具调用 ID，下一轮按 ID 恢复完整 model 内容、Part 顺序、原始调用 ID 与签名。历史与访问密钥、供应商、账号及真实模型绑定，不依赖日志载荷，不跨账号或模型恢复；重启和日志清理保留历史。客户端须保留原响应文本、工具名称、参数及同一响应内的调用顺序；无法完整恢复时在上游调用前拒绝。此例外用于保留可验证的上游历史，不提供通用会话存储，也不接受客户端自行提交受保护思考状态；禁止用签名占位、提示词注入或静默删减绕过限制。
 
 Codex OAuth 使用固定订阅后端，为兼容该后端忽略输出长度、采样等指定参数，不提供输出长度控制。允许忽略的字段集合集中维护在 [Codex 请求适配的 ignoredFields](../internal/codex/request.go)，边界由 [适配测试](../internal/codex/request_test.go) 约束，不允许任意扩展。同协议绕过规范模型，保留可接受的未知字段、工具历史及 reasoning/encrypted_content；跨协议仍受公共转换器限制，差距见第 17 节。

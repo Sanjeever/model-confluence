@@ -4,10 +4,12 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -18,6 +20,144 @@ import (
 	"github.com/Sanjeever/model-confluence/internal/protocol"
 	"github.com/Sanjeever/model-confluence/internal/store"
 )
+
+func TestRewriteGroqReasoning(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		endpoint string
+		body     string
+		want     string
+	}{
+		{"rename", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning_content":"分析","content":"回答","vendor_field":9007199254740993}],"vendor_option":true}`, `{"messages":[{"role":"assistant","reasoning":"分析","content":"回答","vendor_field":9007199254740993}],"vendor_option":true}`},
+		{"already reasoning", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning":"原值"}]}`, ""},
+		{"both fields", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning":"原值","reasoning_content":"旧值"}]}`, `{"messages":[{"role":"assistant","reasoning":"原值"}]}`},
+		{"existing null", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning":null,"reasoning_content":"旧值"}]}`, `{"messages":[{"role":"assistant","reasoning":null}]}`},
+		{"null source", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning_content":null}]}`, `{"messages":[{"role":"assistant","reasoning":null}]}`},
+		{"other role", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"user","content":"问题","reasoning_content":"扩展"}]}`, ""},
+		{"no reasoning", "https://api.groq.com/openai/v1/chat/completions", `{"messages":[{"role":"user","content":"问题"}]}`, ""},
+		{"other provider", "https://example.com/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning_content":"保留"}]}`, ""},
+		{"lookalike host", "https://api.groq.com.example.com/v1/chat/completions", `{"messages":[{"role":"assistant","reasoning_content":"保留"}]}`, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body := []byte(tc.body)
+			got, err := rewriteGroqReasoning(body, tc.endpoint)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(body) != tc.body {
+				t.Fatal("inbound body was modified")
+			}
+			if tc.want == "" {
+				if string(got) != tc.body {
+					t.Fatalf("unchanged request was rewritten: %s", got)
+				}
+				return
+			}
+			var actual, want any
+			decoder := json.NewDecoder(bytes.NewReader(got))
+			decoder.UseNumber()
+			if err := decoder.Decode(&actual); err != nil {
+				t.Fatal(err)
+			}
+			decoder = json.NewDecoder(strings.NewReader(tc.want))
+			decoder.UseNumber()
+			if err := decoder.Decode(&want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(actual, want) {
+				t.Fatalf("upstream body=%s, want %s", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestGroqReasoningReachesUpstream(t *testing.T) {
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%t", stream), func(t *testing.T) {
+			received := make(chan []byte, 1)
+			upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				received <- body
+				if stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					_, _ = io.WriteString(w, "data: {\"id\":\"chat_test\",\"model\":\"real\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"chat_test\",\"model\":\"real\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				} else {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = io.WriteString(w, `{"id":"chat_test","model":"real","choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`)
+				}
+			}))
+			defer upstream.Close()
+			database, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer database.Close()
+			provider, err := database.CreateProvider(store.CreateProviderInput{
+				Name: "custom-name", AuthType: "bearer", Endpoints: map[string]string{protocol.Chat: "https://api.groq.com/openai/v1/chat/completions"},
+				Keys: []store.CreateUpstreamKeyInput{{Secret: "test-secret"}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = database.CreateVirtualModel(store.CreateVirtualModelInput{
+				Name: "virtual", Candidates: []store.CreateCandidateInput{{
+					ProviderID: provider.ID, UpstreamModel: "real",
+					Protocols: []store.CandidateProtocol{{Protocol: protocol.Chat, SupportsStream: true, SupportsTools: true}},
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			resolver, err := httpx.NewClientIPResolver(nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			target, err := url.Parse(upstream.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			transport := upstream.Client().Transport
+			client := &http.Client{Transport: codexTestTransport(func(r *http.Request) (*http.Response, error) {
+				copy := r.Clone(r.Context())
+				copy.URL.Scheme, copy.URL.Host = target.Scheme, target.Host
+				return transport.RoundTrip(copy)
+			})}
+			h := &Handler{store: database, client: client, clientIP: resolver, maxBody: 1 << 20}
+			body := fmt.Sprintf(`{"model":"virtual","stream":%t,"messages":[{"role":"user","content":"问题"},{"role":"assistant","content":null,"reasoning_content":"分析","tool_calls":[{"id":"call_1","type":"function","function":{"name":"lookup","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":"结果"}]}`, stream)
+			r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(body))
+			w := httptest.NewRecorder()
+			h.generateAuthorized(w, r, protocol.Chat, nil, "test")
+			if w.Code != http.StatusOK {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			upstreamBody := <-received
+			var actual struct {
+				Messages []map[string]json.RawMessage `json:"messages"`
+			}
+			if err := json.Unmarshal(upstreamBody, &actual); err != nil {
+				t.Fatal(err)
+			}
+			if len(actual.Messages) != 3 || string(actual.Messages[1]["reasoning"]) != `"分析"` || len(actual.Messages[1]["reasoning_content"]) != 0 {
+				t.Fatalf("unexpected upstream messages: %s", upstreamBody)
+			}
+			if !bytes.Contains(actual.Messages[1]["tool_calls"], []byte(`"call_1"`)) || string(actual.Messages[2]["tool_call_id"]) != `"call_1"` {
+				t.Fatalf("tool history changed: %s", upstreamBody)
+			}
+			detail, err := database.RequestDetail(w.Header().Get("X-Request-ID"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if detail.RequestBody != body || len(detail.Attempts) != 1 || detail.Attempts[0].RequestBody != string(upstreamBody) {
+				t.Fatalf("request logging differs from inbound/upstream bodies: %+v", detail)
+			}
+		})
+	}
+}
 
 func TestReasoningEffortReachesUpstream(t *testing.T) {
 	requests := map[string]string{
