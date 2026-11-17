@@ -31,9 +31,10 @@ export default function PerformancePage() {
   const [from, to] = rangeBounds(range)
   const performance = useQuery({
     queryKey: ['performance', from, to],
-    queryFn: () =>
+    queryFn: ({ signal }) =>
       api<PerformanceOverview>(
         `/api/admin/performance?${new URLSearchParams({ created_from: from, created_to: to })}`,
+        { signal },
       ),
     placeholderData: keepPreviousData,
     refetchInterval: includesToday(range) ? 10000 : false,

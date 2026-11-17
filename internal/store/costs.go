@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
@@ -36,7 +37,7 @@ type UsagePage struct {
 }
 
 // UsageBreakdown 仅汇总已完成请求的已知用量，按 UTC 日期和最终路由分组；缺失指标不参与求和。
-func (s *Store) UsageBreakdown(createdFrom, createdTo time.Time, virtualModel string) (UsagePage, error) {
+func (s *Store) UsageBreakdown(ctx context.Context, createdFrom, createdTo time.Time, virtualModel string) (UsagePage, error) {
 	where := "r.created_at >= ? AND r.created_at < ?"
 	args := []any{formatTime(createdFrom), formatTime(createdTo)}
 	if virtualModel != "" {
@@ -51,15 +52,16 @@ func (s *Store) UsageBreakdown(createdFrom, createdTo time.Time, virtualModel st
 	  COALESCE(SUM(r.total_tokens), 0)`
 
 	groupQuery := `SELECT date(r.created_at) AS day, COALESCE(r.virtual_model, ''), COALESCE(r.upstream_model, ''), COALESCE(r.provider_name, ''), COUNT(*), ` + sumPart + `
-FROM requests r WHERE ` + where + ` AND r.status = 'completed'
+FROM requests r INDEXED BY idx_requests_usage WHERE ` + where + ` AND r.status = 'completed'
 GROUP BY day, r.virtual_model, r.upstream_model, r.provider_name
 ORDER BY day DESC, r.virtual_model`
-	rows, err := s.db.Query(groupQuery, args...)
+	rows, err := s.db.QueryContext(ctx, groupQuery, args...)
 	if err != nil {
 		return UsagePage{}, err
 	}
 	defer rows.Close()
 	groups := make([]UsageGroup, 0)
+	var summary UsageSummary
 	for rows.Next() {
 		var group UsageGroup
 		var day string
@@ -78,19 +80,18 @@ ORDER BY day DESC, r.virtual_model`
 			InputCachedTokens: cacheRead.Int64 + cacheWrite.Int64,
 		}
 		groups = append(groups, group)
+		summary.RequestCount += int64(group.RequestCount)
+		summary.Usage.InputTokens += group.Usage.InputTokens
+		summary.Usage.CacheReadTokens += group.Usage.CacheReadTokens
+		summary.Usage.CacheWriteTokens += group.Usage.CacheWriteTokens
+		summary.Usage.OutputTokens += group.Usage.OutputTokens
+		summary.Usage.ReasoningTokens += group.Usage.ReasoningTokens
+		summary.Usage.TotalTokens += group.Usage.TotalTokens
 	}
 	if err := rows.Err(); err != nil {
 		return UsagePage{}, err
 	}
 
-	var summary UsageSummary
-	var requestCount int64
-	summaryQuery := `SELECT COUNT(*), ` + sumPart + `
-FROM requests r WHERE ` + where + ` AND r.status = 'completed'`
-	if err := s.db.QueryRow(summaryQuery, args...).Scan(&requestCount, &summary.Usage.InputTokens, &summary.Usage.CacheReadTokens, &summary.Usage.CacheWriteTokens, &summary.Usage.OutputTokens, &summary.Usage.ReasoningTokens, &summary.Usage.TotalTokens); err != nil {
-		return UsagePage{}, err
-	}
-	summary.RequestCount = requestCount
 	summary.GroupCount = len(groups)
 	summary.Usage.InputCachedTokens = summary.Usage.CacheReadTokens + summary.Usage.CacheWriteTokens
 	return UsagePage{Groups: groups, Summary: summary}, nil

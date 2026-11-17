@@ -131,6 +131,9 @@ func (s *Store) migrate() error {
 	if err := ensureOAuthColumns(tx); err != nil {
 		return fmt.Errorf("migrate OAuth credentials: %w", err)
 	}
+	if _, err := tx.Exec(analyticsIndexes); err != nil {
+		return fmt.Errorf("create analytics indexes: %w", err)
+	}
 	return tx.Commit()
 }
 

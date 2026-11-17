@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
@@ -42,17 +43,17 @@ type PerformanceRequest struct {
 	CreatedAt        time.Time `json:"created_at"`
 }
 
-func (s *Store) PerformanceOverview(createdFrom, createdTo time.Time) (PerformanceOverview, error) {
+func (s *Store) PerformanceOverview(ctx context.Context, createdFrom, createdTo time.Time) (PerformanceOverview, error) {
 	result := PerformanceOverview{AttentionRequests: []PerformanceRequest{}}
 	var terminalCount int
-	err := s.db.QueryRow(`
+	err := s.db.QueryRowContext(ctx, `
 SELECT
   COUNT(*),
   COALESCE(SUM(status = 'completed'), 0),
   COALESCE(SUM(status = 'failed'), 0),
   COALESCE(SUM(status = 'cancelled'), 0),
   COALESCE(SUM(status = 'in_progress'), 0)
-FROM requests
+FROM requests INDEXED BY idx_requests_performance
 WHERE created_at >= ? AND created_at < ?
 `, formatTime(createdFrom), formatTime(createdTo)).Scan(
 		&result.RequestCount,
@@ -69,26 +70,26 @@ WHERE created_at >= ? AND created_at < ?
 		successRate := float64(result.StatusCounts.Completed) / float64(terminalCount)
 		result.SuccessRate = &successRate
 	}
-	result.FirstContentLatency, result.TotalLatency, err = s.performanceLatencyStats(createdFrom, createdTo)
+	result.FirstContentLatency, result.TotalLatency, err = s.performanceLatencyStats(ctx, createdFrom, createdTo)
 	if err != nil {
 		return PerformanceOverview{}, err
 	}
-	result.AttentionRequests, err = s.performanceAttentionRequests(createdFrom, createdTo)
+	result.AttentionRequests, err = s.performanceAttentionRequests(ctx, createdFrom, createdTo)
 	if err != nil {
 		return PerformanceOverview{}, err
 	}
 	return result, nil
 }
 
-func (s *Store) performanceLatencyStats(createdFrom, createdTo time.Time) (PerformanceLatencyStats, PerformanceLatencyStats, error) {
-	rows, err := s.db.Query(`
+func (s *Store) performanceLatencyStats(ctx context.Context, createdFrom, createdTo time.Time) (PerformanceLatencyStats, PerformanceLatencyStats, error) {
+	rows, err := s.db.QueryContext(ctx, `
 WITH latency(metric, value) AS (
   SELECT 'first_content', first_content_ms
-  FROM requests
+  FROM requests INDEXED BY idx_requests_performance
   WHERE created_at >= ? AND created_at < ? AND status = 'completed' AND first_content_ms IS NOT NULL
   UNION ALL
   SELECT 'total', total_ms
-  FROM requests
+  FROM requests INDEXED BY idx_requests_performance
   WHERE created_at >= ? AND created_at < ? AND status = 'completed' AND total_ms IS NOT NULL
 ), ranked AS (
   SELECT
@@ -131,8 +132,19 @@ GROUP BY metric
 	return firstContent, total, nil
 }
 
-func (s *Store) performanceAttentionRequests(createdFrom, createdTo time.Time) ([]PerformanceRequest, error) {
-	rows, err := s.db.Query(`
+func (s *Store) performanceAttentionRequests(ctx context.Context, createdFrom, createdTo time.Time) ([]PerformanceRequest, error) {
+	rows, err := s.db.QueryContext(ctx, `
+WITH selected AS MATERIALIZED (
+  SELECT id, status, total_ms, created_at
+  FROM requests INDEXED BY idx_requests_performance
+  WHERE created_at >= ? AND created_at < ? AND status != 'in_progress'
+  ORDER BY
+    CASE WHEN status = 'failed' THEN 0 WHEN status = 'cancelled' THEN 1 ELSE 2 END,
+    CASE WHEN status = 'failed' THEN COALESCE(total_ms, 0) ELSE 0 END DESC,
+    COALESCE(total_ms, 0) DESC,
+    created_at DESC
+  LIMIT 8
+)
 SELECT
   r.id,
   r.status,
@@ -146,16 +158,15 @@ SELECT
   r.total_ms,
   COALESCE(r.error_message, ''),
   r.created_at
-FROM requests r
+FROM selected t
+JOIN requests r ON r.id = t.id
 LEFT JOIN attempts a ON a.request_id = r.id
   AND a.position = (SELECT MAX(position) FROM attempts WHERE request_id = r.id)
-WHERE r.created_at >= ? AND r.created_at < ? AND r.status != 'in_progress'
 ORDER BY
-  CASE WHEN r.status = 'failed' THEN 0 WHEN r.status = 'cancelled' THEN 1 ELSE 2 END,
-  CASE WHEN r.status = 'failed' THEN COALESCE(r.total_ms, 0) ELSE 0 END DESC,
-  COALESCE(r.total_ms, 0) DESC,
-  r.created_at DESC
-LIMIT 8
+  CASE WHEN t.status = 'failed' THEN 0 WHEN t.status = 'cancelled' THEN 1 ELSE 2 END,
+  CASE WHEN t.status = 'failed' THEN COALESCE(t.total_ms, 0) ELSE 0 END DESC,
+  COALESCE(t.total_ms, 0) DESC,
+  t.created_at DESC
 `, formatTime(createdFrom), formatTime(createdTo))
 	if err != nil {
 		return nil, err

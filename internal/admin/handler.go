@@ -183,7 +183,7 @@ func (h *Handler) performance(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	performance, err := h.store.PerformanceOverview(createdFrom, createdTo)
+	performance, err := h.store.PerformanceOverview(r.Context(), createdFrom, createdTo)
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return
@@ -228,7 +228,7 @@ func (h *Handler) costs(w http.ResponseWriter, r *http.Request) {
 		httpx.WriteJSON(w, http.StatusBadRequest, map[string]string{"error": err.Error()})
 		return
 	}
-	usage, err := h.store.UsageBreakdown(createdFrom, createdTo, strings.TrimSpace(r.URL.Query().Get("virtual_model")))
+	usage, err := h.store.UsageBreakdown(r.Context(), createdFrom, createdTo, strings.TrimSpace(r.URL.Query().Get("virtual_model")))
 	if err != nil {
 		httpx.WriteJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
 		return

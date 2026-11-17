@@ -23,10 +23,10 @@ export default function CostsPage() {
   const [from, to] = rangeBounds(range)
   const usage = useQuery({
     queryKey: ['usage', from, to, model],
-    queryFn: () => {
+    queryFn: ({ signal }) => {
       const query = new URLSearchParams({ created_from: from, created_to: to })
       if (model) query.set('virtual_model', model)
-      return api<UsagePage>(`/api/admin/costs?${query}`)
+      return api<UsagePage>(`/api/admin/costs?${query}`, { signal })
     },
     placeholderData: keepPreviousData,
     refetchInterval: includesToday(range) ? 10000 : false,

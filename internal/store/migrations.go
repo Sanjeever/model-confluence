@@ -1,5 +1,10 @@
 package store
 
+const analyticsIndexes = `
+CREATE INDEX IF NOT EXISTS idx_requests_performance ON requests(created_at, status, total_ms, first_content_ms, id);
+CREATE INDEX IF NOT EXISTS idx_requests_usage ON requests(status, created_at, virtual_model, upstream_model, provider_name, input_tokens, cache_read_tokens, cache_write_tokens, output_tokens, reasoning_tokens, total_tokens);
+`
+
 const schema = `
 PRAGMA foreign_keys = ON;
 
