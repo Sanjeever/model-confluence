@@ -59,6 +59,9 @@ func (h *Handler) codexCredential(ctx context.Context, id, rejectedRevision int6
 }
 
 func (h *Handler) proxyCodex(w http.ResponseWriter, ctx context.Context, response *http.Response, route store.ResolvedRoute, inboundProtocol, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64, stream *streamResponse, includeUsage bool) error {
+	if stream == nil {
+		h.activity.setStage(requestID, liveAggregating)
+	}
 	model := route.VirtualModel
 	var body io.ReadCloser = response.Body
 	if h.streamIdleTimeout > 0 {
@@ -135,6 +138,9 @@ func (h *Handler) proxyCodex(w http.ResponseWriter, ctx context.Context, respons
 					w.Header().Set("X-Accel-Buffering", "no")
 				}
 				err = stream.Write(w, pending.Bytes())
+				if err == nil && semantic && len(chunks) != 0 {
+					stream.markContent()
+				}
 				pending.Reset()
 			}
 		case <-heartbeat:
@@ -173,7 +179,7 @@ func (h *Handler) proxyCodex(w http.ResponseWriter, ctx context.Context, respons
 		}
 	}
 	result := store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: upstreamLog.Bytes(), RawUsageJSON: rawUsage, FirstByteMS: &firstByte, FirstContentMS: firstContent, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()}
-	if logErr := h.store.CompleteAttempt(result); logErr != nil {
+	if logErr := h.completeAttempt(requestID, result, err); logErr != nil {
 		return fmt.Errorf("记录 Codex 响应失败: %w", logErr)
 	}
 	if err != nil && status != "cancelled" && (stream == nil || !stream.Committed()) {
@@ -205,7 +211,7 @@ func (h *Handler) proxyCodex(w http.ResponseWriter, ctx context.Context, respons
 			message = writeErr.Error()
 		}
 	}
-	if logErr := h.store.CompleteRequest(requestResult(requestID, status, clientStatus, marshalHeaders(w.Header()), clientBody, firstContent, time.Since(started).Milliseconds(), message, usage)); logErr != nil {
+	if logErr := h.completeRequest(requestResult(requestID, status, clientStatus, marshalHeaders(w.Header()), clientBody, firstContent, time.Since(started).Milliseconds(), message, usage)); logErr != nil {
 		if stream == nil && err == nil {
 			slog.Error("record Codex client response", "request_id", requestID, "error", logErr)
 			return fmt.Errorf("%w: %v", errCodexResponseFinished, logErr)

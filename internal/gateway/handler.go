@@ -43,6 +43,7 @@ type Handler struct {
 	sessionAffinity         bool
 	affinityMu              sync.Mutex
 	affinities              map[affinityKey]affinityBinding
+	activity                liveRoutingActivity
 }
 
 type candidateFailure struct {
@@ -241,14 +242,17 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	w.Header().Set("X-Request-ID", requestID)
 
 	headersJSON := marshalHeaders(r.Header)
-	if startErr := h.store.StartRequest(store.RequestStart{
+	entry := store.RequestStart{
 		ID: requestID, AccessKeyID: accessKeyID, AccessKeyName: accessKeyName, VirtualModel: requestMeta.Model,
 		InboundProtocol: inboundProtocol, InboundEndpoint: r.URL.Path, Stream: requestMeta.Stream, ReasoningEffort: requestMeta.Effort,
 		ClientIP: h.clientIP.Resolve(r), UserAgent: r.UserAgent(), Headers: headersJSON, Body: body, CreatedAt: started.UTC(),
-	}); startErr != nil {
+	}
+	if startErr := h.store.StartRequest(entry); startErr != nil {
 		h.writeError(w, inboundProtocol, http.StatusInternalServerError, "logging_error", startErr.Error(), requestID)
 		return
 	}
+	h.activity.begin(entry)
+	defer h.activity.remove(requestID)
 	if options.ReplayOf != "" {
 		if logErr := h.store.SaveRequestRouting(requestID, options.ReplayOf, nil); logErr != nil {
 			h.finishError(w, inboundProtocol, requestID, started, 500, "logging_error", logErr.Error())
@@ -334,6 +338,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 	var stream *streamResponse
 	if requestMeta.Stream {
 		stream = newStreamResponse(h.streamHeartbeatInterval)
+		stream.onContent = func() { h.activity.setStage(requestID, liveStreaming) }
 		defer stream.Close()
 	}
 	finishError := func(status int, code, message string) {
@@ -368,6 +373,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			}
 			invalidResponseErr = result.err
 			if result.retryRevision != 0 {
+				h.activity.setStage(requestID, liveRetrying)
 				oauthRetry[route.Key.ID] = result.retryRevision
 				index--
 				continue
@@ -417,7 +423,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			credential, refreshed, err = h.codexCredential(r.Context(), route.Key.ID, oauthRetry[route.Key.ID])
 			if err != nil {
 				if r.Context().Err() != nil {
-					h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: r.Context().Err().Error(), CompletedAt: time.Now().UTC()})
+					h.completeRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: r.Context().Err().Error(), CompletedAt: time.Now().UTC()})
 					return
 				}
 				invalidResponseErr = err
@@ -443,7 +449,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			applyProviderHeaders(outbound.Header, route.Provider, route.Key.Secret)
 		}
 		attemptStarted := time.Now()
-		attemptID, err := h.store.StartAttempt(store.AttemptStart{
+		attemptID, err := h.startAttempt(store.AttemptStart{
 			RequestID: requestID, Position: position, ProviderID: route.Provider.ID, ProviderName: route.Provider.Name,
 			UpstreamKeyID: route.Key.ID, UpstreamKeyName: route.Key.Name, CandidateID: route.CandidateID,
 			UpstreamModel: route.UpstreamModel, Protocol: route.UpstreamProtocol, Endpoint: route.UpstreamEndpoint,
@@ -468,7 +474,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				h.completeCancelled(w, stream, attemptID, requestID, attemptStarted, started, cancelErr)
 				return
 			}
-			h.completeAttemptFailure(attemptID, attemptStarted, err)
+			h.completeAttemptFailure(requestID, attemptID, attemptStarted, err)
 			h.candidateFailed(route.CandidateID, route.CandidateRevision)
 			index = skipCandidate(routes, index, route.CandidateID)
 			if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
@@ -487,23 +493,24 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 				if isCodex && r.Context().Err() != nil {
 					now := time.Now().UTC()
 					message := r.Context().Err().Error()
-					if logErr := h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "cancelled", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: message, CompletedAt: now}); logErr != nil {
+					if logErr := h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: "cancelled", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: message, CompletedAt: now}, nil); logErr != nil {
 						finishError(http.StatusInternalServerError, "logging_error", logErr.Error())
 						return
 					}
-					if logErr := h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: now}); logErr != nil {
+					if logErr := h.completeRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: now}); logErr != nil {
 						finishError(http.StatusInternalServerError, "logging_error", logErr.Error())
 					}
 					return
 				}
-				h.completeAttemptFailure(attemptID, attemptStarted, readErr)
+				h.completeAttemptFailure(requestID, attemptID, attemptStarted, readErr)
 				if !h.waitBeforeRetry(r.Context(), &retryIndex, index+1 < len(routes), requestID, started) {
 					return
 				}
 				continue
 			}
-			h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "failed", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: string(responseBody), CompletedAt: time.Now().UTC()})
+			h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: "failed", ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: string(responseBody), CompletedAt: time.Now().UTC()}, nil)
 			if isCodex && response.StatusCode == http.StatusUnauthorized && !refreshed && oauthRetry[route.Key.ID] == 0 {
+				h.activity.setStage(requestID, liveRetrying)
 				oauthRetry[route.Key.ID] = credential.Revision
 				index--
 				continue
@@ -572,6 +579,7 @@ func (h *Handler) generateAuthorized(w http.ResponseWriter, r *http.Request, inb
 			var failure *codex.UpstreamError
 			if errors.As(err, &failure) {
 				if failure.Status == 401 && !refreshed && oauthRetry[route.Key.ID] == 0 {
+					h.activity.setStage(requestID, liveRetrying)
 					oauthRetry[route.Key.ID] = credential.Revision
 					index--
 					continue
@@ -614,6 +622,7 @@ func (h *Handler) waitBeforeRetry(ctx context.Context, retryIndex *int, hasNext 
 	if !hasNext {
 		return true
 	}
+	h.activity.setStage(requestID, liveRetrying)
 	delay := retryBackoff(*retryIndex)
 	*retryIndex++
 	timer := time.NewTimer(delay)
@@ -622,7 +631,7 @@ func (h *Handler) waitBeforeRetry(ctx context.Context, retryIndex *int, hasNext 
 	case <-timer.C:
 		return true
 	case <-ctx.Done():
-		h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: ctx.Err().Error(), CompletedAt: time.Now().UTC()})
+		h.completeRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: ctx.Err().Error(), CompletedAt: time.Now().UTC()})
 		return false
 	}
 }
@@ -689,17 +698,18 @@ func (h *Handler) candidateSucceeded(candidateID, revision int64) {
 
 func (h *Handler) completeCancelled(w http.ResponseWriter, stream *streamResponse, attemptID int64, requestID string, attemptStarted, started time.Time, err error) {
 	now := time.Now().UTC()
-	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "cancelled", TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now})
+	h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: "cancelled", TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now}, nil)
 	result := store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: now}
 	if stream != nil && stream.Committed() {
 		result.ResponseStatus = stream.Status()
 		result.ResponseHeaders = marshalHeaders(w.Header())
 		result.ResponseBody = stream.Body()
 	}
-	h.store.CompleteRequest(result)
+	h.completeRequest(result)
 }
 
 func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, upstreamProtocol, inboundProtocol, virtualModel, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64) error {
+	h.activity.setStage(requestID, liveReceiving)
 	defer response.Body.Close()
 	var body io.Reader = response.Body
 	if h.streamIdleTimeout > 0 {
@@ -707,7 +717,7 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 	}
 	rawBody, err := io.ReadAll(body)
 	if err != nil {
-		h.completeAttemptFailure(attemptID, attemptStarted, err)
+		h.completeAttemptFailure(requestID, attemptID, attemptStarted, err)
 		return err
 	}
 	var clientBody []byte
@@ -717,7 +727,7 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 		clientBody, err = protocol.ConvertResponse(rawBody, upstreamProtocol, inboundProtocol, virtualModel)
 	}
 	if err != nil {
-		h.completeAttemptFailure(attemptID, attemptStarted, err)
+		h.completeAttemptFailure(requestID, attemptID, attemptStarted, err)
 		return err
 	}
 	usage, rawUsage, usageErr := protocol.ExtractUsage(rawBody, upstreamProtocol, false)
@@ -733,8 +743,8 @@ func (h *Handler) proxyBuffered(w http.ResponseWriter, response *http.Response, 
 		errorMessage = "解析上游用量失败：" + usageErr.Error()
 	}
 	total := time.Since(started).Milliseconds()
-	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: rawBody, RawUsageJSON: rawUsage, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: errorMessage, CompletedAt: time.Now().UTC()})
-	h.store.CompleteRequest(requestResult(requestID, status, response.StatusCode, marshalHeaders(w.Header()), clientBody, nil, total, errorMessage, usage))
+	h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: rawBody, RawUsageJSON: rawUsage, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: errorMessage, CompletedAt: time.Now().UTC()}, nil)
+	h.completeRequest(requestResult(requestID, status, response.StatusCode, marshalHeaders(w.Header()), clientBody, nil, total, errorMessage, usage))
 	return nil
 }
 
@@ -759,7 +769,7 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 			stream.Commit(w, response.StatusCode)
 		}
 		committed = true
-		status, errorMessage = proxyPassthroughEvents(w, ctx, reader, stream, virtualModel, started, &upstreamLog, &firstContent)
+		status, errorMessage = proxyPassthroughEvents(w, ctx, reader, stream, inboundProtocol, virtualModel, started, &upstreamLog, &firstContent)
 	} else {
 		converter, err := protocol.NewStreamConverter(upstreamProtocol, inboundProtocol, virtualModel)
 		if err != nil {
@@ -773,7 +783,7 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 		errorMessage = "解析上游用量失败：" + usageErr.Error()
 	}
 	total := time.Since(started).Milliseconds()
-	h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: upstreamLog.Bytes(), RawUsageJSON: rawUsage, FirstByteMS: &firstByte, FirstContentMS: firstContent, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: errorMessage, CompletedAt: time.Now().UTC()})
+	h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: upstreamLog.Bytes(), RawUsageJSON: rawUsage, FirstByteMS: &firstByte, FirstContentMS: firstContent, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: errorMessage, CompletedAt: time.Now().UTC()}, nil)
 	if status == "failed" && !committed {
 		return errors.New(errorMessage)
 	}
@@ -781,7 +791,7 @@ func (h *Handler) proxyStream(w http.ResponseWriter, ctx context.Context, respon
 		stream.WriteError(w, inboundProtocol, "invalid_upstream_response", errorMessage, requestID)
 		clientResponseStatus = stream.Status()
 	}
-	h.store.CompleteRequest(requestResult(requestID, status, clientResponseStatus, marshalHeaders(w.Header()), stream.Body(), firstContent, total, errorMessage, usage))
+	h.completeRequest(requestResult(requestID, status, clientResponseStatus, marshalHeaders(w.Header()), stream.Body(), firstContent, total, errorMessage, usage))
 	return nil
 }
 
@@ -802,10 +812,12 @@ func int64Pointer(value *int) *int64 {
 	return &converted
 }
 
-func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, stream *streamResponse, virtualModel string, started time.Time, upstreamLog *bytes.Buffer, firstContent **int64) (string, string) {
+func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *bufio.Reader, stream *streamResponse, inboundProtocol, virtualModel string, started time.Time, upstreamLog *bytes.Buffer, firstContent **int64) (string, string) {
 	readCtx, cancelRead := context.WithCancel(ctx)
 	defer cancelRead()
 	lines := readStreamLines(readCtx, reader)
+	hasContent := protocol.NewStreamContentObserver(inboundProtocol)
+	eventStart := 0
 	for {
 		var line []byte
 		var err error
@@ -831,6 +843,13 @@ func proxyPassthroughEvents(w http.ResponseWriter, ctx context.Context, reader *
 			}
 			if writeErr := stream.Write(w, clientLine); writeErr != nil {
 				return "cancelled", writeErr.Error()
+			}
+			if stream.onContent != nil && (bytes.Equal(line, []byte("\n")) || bytes.Equal(line, []byte("\r\n"))) {
+				event, _ := protocol.ReadSSEEvent(bufio.NewReader(bytes.NewReader(upstreamLog.Bytes()[eventStart:])))
+				eventStart = upstreamLog.Len()
+				if hasContent(event) {
+					stream.markContent()
+				}
 			}
 		}
 		if err != nil {
@@ -890,6 +909,9 @@ func proxyConvertedEvents(w http.ResponseWriter, ctx context.Context, reader *bu
 					return "cancelled", writeErr.Error(), committed
 				}
 			}
+			if semantic && len(chunks) != 0 {
+				stream.markContent()
+			}
 			if done {
 				return "completed", "", committed
 			}
@@ -939,7 +961,7 @@ func (h *Handler) authenticate(w http.ResponseWriter, r *http.Request, protocol 
 
 func (h *Handler) finishError(w http.ResponseWriter, protocol, requestID string, started time.Time, status int, code, message string) {
 	body := h.writeError(w, protocol, status, code, message, requestID)
-	h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "failed", ResponseStatus: status, ResponseHeaders: marshalHeaders(w.Header()), ResponseBody: body, TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()})
+	h.completeRequest(store.RequestResult{ID: requestID, Status: "failed", ResponseStatus: status, ResponseHeaders: marshalHeaders(w.Header()), ResponseBody: body, TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()})
 }
 
 func (h *Handler) writeError(w http.ResponseWriter, protocol string, status int, code, message, requestID string) []byte {
@@ -956,8 +978,8 @@ func (h *Handler) writeError(w http.ResponseWriter, protocol string, status int,
 	return append(body, '\n')
 }
 
-func (h *Handler) completeAttemptFailure(id int64, started time.Time, err error) {
-	h.store.CompleteAttempt(store.AttemptResult{ID: id, Status: "failed", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()})
+func (h *Handler) completeAttemptFailure(requestID string, id int64, started time.Time, err error) {
+	h.completeAttempt(requestID, store.AttemptResult{ID: id, Status: "failed", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}, err)
 }
 
 func (h *Handler) updateKeyAfterError(route store.ResolvedRoute, status int, body []byte, headers http.Header) {

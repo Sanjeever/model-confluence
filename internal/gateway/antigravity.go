@@ -149,7 +149,7 @@ func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, rou
 	credential, refreshed, err := h.antigravityCredential(r.Context(), route.Key.ID, rejectedRevision)
 	if err != nil {
 		if r.Context().Err() != nil {
-			h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: r.Context().Err().Error(), CompletedAt: time.Now().UTC()})
+			h.completeRequest(store.RequestResult{ID: requestID, Status: "cancelled", TotalMS: time.Since(started).Milliseconds(), ErrorMessage: r.Context().Err().Error(), CompletedAt: time.Now().UTC()})
 			return antigravityAttemptResult{finished: true}
 		}
 		return antigravityAttemptResult{nextKey: true, err: err}
@@ -166,7 +166,7 @@ func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, rou
 	// 订阅后端的请求头由适配器构造，客户端凭据与协议私有头不进入此连接。
 	antigravity.ApplyHeaders(outbound.Header, credential.AccessToken)
 	attemptStarted := time.Now()
-	attemptID, err := h.store.StartAttempt(store.AttemptStart{RequestID: requestID, Position: *position, ProviderID: route.Provider.ID, ProviderName: route.Provider.Name, UpstreamKeyID: route.Key.ID, UpstreamKeyName: route.Key.Name, CandidateID: route.CandidateID, UpstreamModel: route.UpstreamModel, Protocol: protocol.Antigravity, Endpoint: route.UpstreamEndpoint, UpstreamStream: true, IgnoredParameters: ignored, Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC()})
+	attemptID, err := h.startAttempt(store.AttemptStart{RequestID: requestID, Position: *position, ProviderID: route.Provider.ID, ProviderName: route.Provider.Name, UpstreamKeyID: route.Key.ID, UpstreamKeyName: route.Key.Name, CandidateID: route.CandidateID, UpstreamModel: route.UpstreamModel, Protocol: protocol.Antigravity, Endpoint: route.UpstreamEndpoint, UpstreamStream: true, IgnoredParameters: ignored, Headers: marshalHeaders(outbound.Header), Body: upstreamBody, CreatedAt: attemptStarted.UTC()})
 	if err != nil {
 		return antigravityAttemptResult{status: 500, err: fmt.Errorf("建立上游调用日志: %w", err)}
 	}
@@ -177,7 +177,7 @@ func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, rou
 			h.completeCancelled(w, stream, attemptID, requestID, attemptStarted, started, r.Context().Err())
 			return antigravityAttemptResult{finished: true}
 		}
-		if logErr := h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: "failed", TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}); logErr != nil {
+		if logErr := h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: "failed", TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}, err); logErr != nil {
 			return antigravityAttemptResult{status: 500, err: logErr}
 		}
 		return antigravityAttemptResult{err: err}
@@ -198,11 +198,11 @@ func (h *Handler) attemptAntigravity(w http.ResponseWriter, r *http.Request, rou
 		if r.Context().Err() != nil {
 			status, err = "cancelled", r.Context().Err()
 		}
-		if logErr := h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}); logErr != nil {
+		if logErr := h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: responseBody, FirstByteMS: &firstByte, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()}, err); logErr != nil {
 			return antigravityAttemptResult{status: 500, err: logErr}
 		}
 		if status == "cancelled" {
-			h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: status, TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()})
+			h.completeRequest(store.RequestResult{ID: requestID, Status: status, TotalMS: time.Since(started).Milliseconds(), ErrorMessage: err.Error(), CompletedAt: time.Now().UTC()})
 			return antigravityAttemptResult{finished: true}
 		}
 		if readErr != nil {
@@ -263,6 +263,9 @@ var errAntigravityResponseFinished = errors.New("Antigravity response already re
 var errAntigravityLogging = errors.New("记录 Antigravity 响应失败")
 
 func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, response *http.Response, route store.ResolvedRoute, inbound, requestID string, attemptID int64, started, attemptStarted time.Time, firstByte int64, stream *streamResponse, includeUsage bool) error {
+	if stream == nil {
+		h.activity.setStage(requestID, liveAggregating)
+	}
 	var reader io.ReadCloser = response.Body
 	if h.streamIdleTimeout > 0 {
 		reader = newIdleTimeoutReader(response.Body, h.streamIdleTimeout)
@@ -327,6 +330,9 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 					w.Header().Set("Cache-Control", "no-cache")
 				}
 				err = stream.Write(w, pending.Bytes())
+				if err == nil && semantic && len(chunks) != 0 {
+					stream.markContent()
+				}
 				pending.Reset()
 			}
 		case <-heartbeat:
@@ -363,7 +369,7 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 			err, message = ctx.Err(), ctx.Err().Error()
 		}
 	}
-	if logErr := h.store.CompleteAttempt(store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: raw.Bytes(), RawUsageJSON: rawUsage, FirstByteMS: &firstByte, FirstContentMS: firstContent, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()}); logErr != nil {
+	if logErr := h.completeAttempt(requestID, store.AttemptResult{ID: attemptID, Status: status, ResponseStatus: response.StatusCode, ResponseHeaders: marshalHeaders(response.Header), ResponseBody: raw.Bytes(), RawUsageJSON: rawUsage, FirstByteMS: &firstByte, FirstContentMS: firstContent, TotalMS: time.Since(attemptStarted).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()}, err); logErr != nil {
 		if stream != nil && stream.Committed() {
 			h.finishStreamError(w, inbound, requestID, started, stream, "logging_error", logErr.Error())
 			return errAntigravityResponseFinished
@@ -393,7 +399,7 @@ func (h *Handler) proxyAntigravity(w http.ResponseWriter, ctx context.Context, r
 			status, message = "cancelled", writeErr.Error()
 		}
 	}
-	if logErr := h.store.CompleteRequest(requestResult(requestID, status, clientStatus, marshalHeaders(w.Header()), clientBody, firstContent, time.Since(started).Milliseconds(), message, protocol.AntigravityAccountingUsage(usage))); logErr != nil {
+	if logErr := h.completeRequest(requestResult(requestID, status, clientStatus, marshalHeaders(w.Header()), clientBody, firstContent, time.Since(started).Milliseconds(), message, protocol.AntigravityAccountingUsage(usage))); logErr != nil {
 		slog.Error("record Antigravity response", "request_id", requestID, "error", logErr)
 		return errAntigravityResponseFinished
 	}

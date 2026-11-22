@@ -78,6 +78,29 @@ type streamEvent struct {
 	Usage      Usage
 }
 
+// NewStreamContentObserver recognizes output events without modifying the
+// original stream or treating provider-specific events as proxy failures.
+func NewStreamContentObserver(source string) func(SSEEvent) bool {
+	decoder := newStreamDecoder(source)
+	return func(event SSEEvent) bool {
+		events, err := decoder.Decode(event)
+		if err != nil {
+			return false
+		}
+		for _, item := range events {
+			switch item.Kind {
+			case streamToolStart:
+				return true
+			case streamText, streamReasoning, streamToolDelta:
+				if item.Delta != "" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+}
+
 type StreamConverter struct {
 	decoder *streamDecoder
 	encoder *streamEncoder

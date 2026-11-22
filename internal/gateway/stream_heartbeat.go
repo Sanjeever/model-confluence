@@ -21,6 +21,14 @@ type streamResponse struct {
 	committed bool
 	status    int
 	body      bytes.Buffer
+	onContent func()
+}
+
+func (r *streamResponse) markContent() {
+	if r.onContent != nil {
+		r.onContent()
+		r.onContent = nil
+	}
 }
 
 func newStreamResponse(interval time.Duration) *streamResponse {
@@ -194,5 +202,5 @@ func readStreamEvents(ctx context.Context, reader *bufio.Reader) <-chan streamEv
 
 func (h *Handler) finishStreamError(w http.ResponseWriter, inboundProtocol, requestID string, started time.Time, stream *streamResponse, code, message string) {
 	stream.WriteError(w, inboundProtocol, code, message, requestID)
-	h.store.CompleteRequest(store.RequestResult{ID: requestID, Status: "failed", ResponseStatus: stream.Status(), ResponseHeaders: marshalHeaders(w.Header()), ResponseBody: stream.Body(), TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()})
+	h.completeRequest(store.RequestResult{ID: requestID, Status: "failed", ResponseStatus: stream.Status(), ResponseHeaders: marshalHeaders(w.Header()), ResponseBody: stream.Body(), TotalMS: time.Since(started).Milliseconds(), ErrorMessage: message, CompletedAt: time.Now().UTC()})
 }

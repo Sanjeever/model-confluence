@@ -395,7 +395,7 @@ func TestProxyPassthroughWritesHeartbeatWhileWaitingForFirstEvent(t *testing.T) 
 	var upstreamLog bytes.Buffer
 	var firstContent *int64
 
-	status, message := proxyPassthroughEvents(w, ctx, bufio.NewReader(reader), stream, "virtual-model", time.Now(), &upstreamLog, &firstContent)
+	status, message := proxyPassthroughEvents(w, ctx, bufio.NewReader(reader), stream, protocol.Chat, "virtual-model", time.Now(), &upstreamLog, &firstContent)
 
 	if status != "completed" || message != "" {
 		t.Fatalf("unexpected result: status=%q message=%q", status, message)
