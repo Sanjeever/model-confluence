@@ -48,6 +48,44 @@ export type Overview = {
   virtual_models: number
 }
 
+export type LiveRoutingNodeKind = 'access_key' | 'virtual_model' | 'provider'
+export type LiveRoutingCatalogNode = { kind: LiveRoutingNodeKind; id: number; name: string }
+export type LiveRoutingStage =
+  | 'routing'
+  | 'waiting'
+  | 'receiving'
+  | 'aggregating'
+  | 'streaming'
+  | 'retrying'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+
+export type LiveRouteTarget = { provider_id: number; provider_name: string; model: string; protocol: string }
+export type LiveRouteEvent = {
+  kind: LiveRoutingStage | 'attempt_started' | 'attempt_failed'
+  at: string
+  upstream?: LiveRouteTarget
+  response_status?: number
+}
+
+export type LiveRoutingRequest = {
+  id: string
+  access_key_id: number | null
+  access_key_name: string
+  virtual_model: string
+  inbound_protocol: string
+  stream: boolean
+  stage: LiveRoutingStage
+  started_at: string
+  completed_at?: string
+  attempts: number
+  upstream?: LiveRouteTarget
+  events: LiveRouteEvent[]
+}
+
+export type LiveRoutingSnapshot = { now: string; active: LiveRoutingRequest[]; recent: LiveRoutingRequest[] }
+
 export type Page<T> = {
   items: T[]
   total: number
