@@ -55,6 +55,8 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	mux.Handle("POST /api/admin/logout", h.requireSession(h.requireCSRF(http.HandlerFunc(h.logout))))
 	mux.Handle("POST /api/admin/change-password", h.requireSession(h.requireCSRF(http.HandlerFunc(h.changePassword))))
 	mux.Handle("GET /api/admin/overview", h.requireSession(http.HandlerFunc(h.overview)))
+	mux.Handle("GET /api/admin/live-routing", h.requireSession(http.HandlerFunc(h.liveRouting)))
+	mux.Handle("GET /api/admin/live-routing/catalog", h.requireSession(http.HandlerFunc(h.liveRoutingCatalog)))
 	mux.Handle("GET /api/admin/performance", h.requireSession(http.HandlerFunc(h.performance)))
 	mux.Handle("GET /api/admin/health", h.requireSession(http.HandlerFunc(h.health)))
 	mux.Handle("POST /api/admin/upstream-keys/{id}/reset-runtime", h.requireSession(h.requireCSRF(http.HandlerFunc(h.resetUpstreamKeyRuntime))))

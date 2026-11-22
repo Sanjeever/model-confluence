@@ -285,7 +285,7 @@ func (s *Store) hydrateProviders(providers []Provider, includeSecrets bool) erro
 	return keyRows.Err()
 }
 
-func idQuery(ids []int64) (string, []any) {
+func idQuery[T int64 | string](ids []T) (string, []any) {
 	args := make([]any, len(ids))
 	for index, id := range ids {
 		args[index] = id
