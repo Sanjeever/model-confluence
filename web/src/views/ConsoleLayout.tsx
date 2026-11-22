@@ -14,6 +14,7 @@ import {
   Menu,
   Moon,
   Monitor,
+  Network,
   Server,
   Settings2,
   Sun,
@@ -60,6 +61,7 @@ type PasswordForm = {
 const navigation = [
   [
     { path: '/performance', label: '性能监控', icon: Activity },
+    { path: '/live-routing', label: '实时路由', icon: Network },
     { path: '/requests', label: '使用记录', icon: Database },
     { path: '/usage', label: '用量统计', icon: ArrowRightLeft },
     { path: '/health', label: '上游健康', icon: HeartPulse },

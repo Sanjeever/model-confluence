@@ -16,6 +16,7 @@ import ConsoleLayout from './views/ConsoleLayout'
 import LoadingScreen from './views/LoadingScreen'
 import OverviewPage from './views/OverviewPage'
 import PerformancePage from './views/PerformancePage'
+import LiveRoutingPage from './views/LiveRoutingPage'
 import CostsPage from './views/CostsPage'
 import HealthPage from './views/HealthPage'
 import AccessKeysPage from './views/AccessKeysPage'
@@ -96,6 +97,7 @@ function AppRoutes() {
         <Route element={<ConsoleLayout onSignedOut={signOut} />}>
           <Route index element={<Navigate to="/performance" replace />} />
           <Route path="performance" element={<PerformancePage />} />
+          <Route path="live-routing" element={<LiveRoutingPage />} />
           <Route path="requests" element={<OverviewPage />} />
           <Route path="requests/:detailID" element={<OverviewPage />} />
           <Route path="usage" element={<CostsPage />} />
