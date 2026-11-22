@@ -119,4 +119,10 @@ export const providerTemplates: Array<{ name: string; chat_completions: string; 
     responses: 'https://api.everyapi.ai/v1/responses',
     messages: 'https://api.everyapi.ai/v1/messages',
   },
+  {
+    name: 'ModelScope',
+    chat_completions: 'https://api-inference.modelscope.cn/v1/chat/completions',
+    responses: 'https://api-inference.modelscope.cn/v1/responses',
+    messages: 'https://api-inference.modelscope.cn/v1/messages',
+  },
 ]
