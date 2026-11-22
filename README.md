@@ -10,15 +10,10 @@
 
 ## 核心能力
 
-- 提供 `/v1/chat/completions`、`/v1/responses`、`/v1/messages` 和 `/v1/models`。
-- 同协议治理式透传，跨协议支持非流式文本、SSE、图片输入和客户端工具调用；可转换明文推理输出，但不保证思考历史往返。
-- 虚拟模型、有序候选和供应商密钥池统一管理路由，针对可切换的上游错误重试、退避和冷却。
-- 保存请求与上游尝试的载荷、用量和耗时，提供实时路由、使用记录、性能监控、用量统计和上游健康界面。
-- 支持通过浏览器登录或凭据文件导入 Codex OAuth、Antigravity OAuth 账号，账号池按需刷新令牌；[登录与远程部署](docs/operations.md#浏览器登录)、[Antigravity 实验性接入边界](docs/operations.md#antigravity-oauth)见运行说明。
-- 管理访问密钥、供应商和模型路由，提供供应商模板、真实模型名拉取、虚拟模型连通性测试与密钥运行状态重置。
-- 路由预演与历史决策追踪、指定候选的流式及工具兼容性验证、日志筛选与转换差异、调试重放、OAuth 原位重新登录、上游额度信号和日志存储管理；可选会话粘性按明确客户端会话头复用密钥。操作见 [运行与开发](docs/operations.md#管理后台与客户端调用)。
-
-转换覆盖可明确对应的公共能力；完整能力边界、设计契约及当前差距见 [需求与设计](docs/requirements.md)。不支持多实例共享数据库或多用户管理。
+- 同协议透传，跨协议转换文本、SSE、图片输入和客户端工具调用。协议入口与能力边界见 [需求与设计](docs/requirements.md#4-对外-api)。
+- 通过虚拟模型、有序候选和供应商密钥池管理路由，支持故障切换、路由预演和兼容性验证。
+- 在管理后台查看实时路由、请求与上游尝试、Token 用量和延迟，按需比较转换差异或重放请求。操作见 [管理后台与客户端调用](docs/operations.md#管理后台与客户端调用)。
+- 支持普通 API Key 供应商、Codex OAuth 和实验性的 Antigravity OAuth。账号接入见 [浏览器登录](docs/operations.md#浏览器登录)。
 
 ## 下载与运行
 
@@ -38,30 +33,13 @@ $env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
 ./model-confluence.exe --listen 127.0.0.1:8080 --data-dir ./data
 ```
 
-访问 <http://localhost:8080> 登录管理后台，创建访问密钥、供应商及虚拟模型后即可调用网关。初始化环境变量不会修改已有管理员密码。
+访问 <http://localhost:8080> 登录管理后台，然后按 [客户端配置步骤](docs/operations.md#管理后台与客户端调用)创建访问密钥和模型路由。
 
-数据库及管理后台包含完整密钥和请求载荷。请保护数据目录；远程访问管理后台需要 HTTPS 反向代理。Docker、Compose、API 示例、运行参数、升级及密码重置见 [运行与开发](docs/operations.md)。
+数据库及日志包含完整凭据。部署、升级和远程访问见 [运行与开发](docs/operations.md)。
 
 ## 本地开发
 
-Go 版本要求见 [go.mod](go.mod)，Node.js 与 pnpm 可参考 [发布工作流](.github/workflows/release.yml) 中使用的版本。
-
-在项目根目录启动后端：
-
-```powershell
-$env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
-go run ./cmd/model-confluence --listen 127.0.0.1:8080 --data-dir ./data
-```
-
-另一个终端启动前端：
-
-```powershell
-cd web
-pnpm install --frozen-lockfile
-pnpm dev
-```
-
-访问 <http://localhost:5173>。普通 Go 构建提供占位页，开发后台由 Vite 提供；含管理后台的单文件构建、验证和发布说明见 [运行与开发](docs/operations.md)。
+工具版本、前后端启动命令和单文件构建步骤见 [开发与构建](docs/operations.md#开发与构建)。
 
 ## 项目结构与文档入口
 
@@ -76,18 +54,14 @@ pnpm dev
 | `internal/store` | SQLite schema、迁移、配置、路由与日志查询 |
 | `web/src`、`internal/webui` | 管理后台源码与静态资源托管 |
 
-- [需求与设计](docs/requirements.md)：产品边界、领域概念、架构约束、安全取舍与已知实现差距。
-- [运行与开发](docs/operations.md)：部署、配置、调用示例、开发、构建与发布。
-- [更新日志](docs/releases)：按版本记录用户可见变化与升级说明；较早版本见 [GitHub Releases](https://github.com/Sanjeever/model-confluence/releases)。
-- [AGENTS.md](AGENTS.md)：Coding Agent 的事实来源、范围、增量文档影响判断与完成标准。
-
-当前实现、API 行为和配置值以相关代码、schema 和测试为依据；设计意图和长期约束以需求与设计文档为依据。文档中的验收目标不代表全部已实现。
+- 产品边界、架构取舍及实现差距见 [需求与设计](docs/requirements.md)。
+- 部署、配置、调用示例和发布流程见 [运行与开发](docs/operations.md)。
+- 版本变化与升级说明见 [更新日志](docs/releases)及 [GitHub Releases](https://github.com/Sanjeever/model-confluence/releases)。
+- Coding Agent 的工作约定见 [AGENTS.md](AGENTS.md)。
 
 ## 界面预览
 
-截图仅展示界面示例；更新截图时使用演示数据，避免暴露真实密钥和请求内容。
-
-以下截图使用临时演示配置，请求详情展示本地不可达上游的排障流程。
+截图使用演示数据。请求详情展示上游不可达时的排障流程。
 
 ### 使用记录
 

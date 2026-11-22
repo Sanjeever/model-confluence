@@ -1,24 +1,16 @@
 # 运行与开发
 
-本文档说明如何部署、配置、调用和开发模汇。项目介绍见 [README](../README.md)，协议契约与安全决策见 [需求与设计](requirements.md)。操作说明随实现维护：配置以 [配置定义](../internal/config/config.go) 为准，构建与发布以 [Dockerfile](../Dockerfile)、[前端脚本](../web/package.json) 和 [发布工作流](../.github/workflows/release.yml) 为准。
+本文档说明如何部署、配置、调用和开发模汇。项目介绍见 [README](../README.md)，产品契约和实现差距见 [需求与设计](requirements.md)。
 
 ## 二进制与首次启动
 
-启动命令见 [README](../README.md#下载与运行)。发布包命名如下，`VERSION` 对应去掉 `v` 前缀的发布标签；每个 Release 同时提供 `checksums.txt`。
+启动命令见 [README](../README.md#下载与运行)。下载适合当前系统和架构的归档，发布页面同时提供 `checksums.txt`。归档目标与命名见 [发布工作流](../.github/workflows/release.yml)。
 
-| 平台 | 文件 |
-| --- | --- |
-| macOS Apple Silicon | `model-confluence_VERSION_darwin_arm64.tar.gz` |
-| Windows 64 位 | `model-confluence_VERSION_windows_amd64.zip` |
-| Linux 64 位 | `model-confluence_VERSION_linux_amd64.tar.gz` |
-
-macOS 发布流程未做 Apple Developer 签名和公证，首次运行可能需要在系统安全设置中确认打开。
-
-初始管理员密码仅在数据库尚未建立管理员时使用，应用保存密码哈希。再次启动时修改 `MODEL_CONFLUENCE_ADMIN_PASSWORD` 不会覆盖已有密码。其他访问密钥和供应商密钥按产品要求保留明文。
+应用在数据库尚未建立管理员时使用初始密码，随后保存密码哈希。已有实例需要更换密码时，请使用后台修改密码功能，或按 [密码重置步骤](#数据与远程访问)操作。
 
 ## Docker 与 Compose
 
-镜像为 `ghcr.io/sanjeever/model-confluence`，支持 Linux `amd64` 和 `arm64`。镜像内以非 root 用户运行，监听 `0.0.0.0:8080`，数据目录为 `/data`。以下示例只在本机暴露端口并使用命名卷保存 SQLite：
+镜像使用非 root 用户。以下示例将容器的 8080 端口发布到宿主机回环地址，使用命名卷挂载 `/data`。容器默认参数和发布架构见 [Dockerfile](../Dockerfile) 与 [发布工作流](../.github/workflows/release.yml)。
 
 ```bash
 docker run -d --name model-confluence -p 127.0.0.1:8080:8080 -v model-confluence-data:/data -e MODEL_CONFLUENCE_ADMIN_PASSWORD="请替换为管理员密码" ghcr.io/sanjeever/model-confluence:latest
@@ -67,7 +59,7 @@ docker compose up -d
 
 ## 运行参数
 
-下表对应 [配置定义](../internal/config/config.go)；命令行参数覆盖对应环境变量，未提供时使用默认值。Go duration 参数使用 `10s`、`5m` 等形式。
+下表对应 [配置定义](../internal/config/config.go)。命令行参数覆盖对应的环境变量默认值。若设置了 `MODEL_CONFLUENCE_LOG_RETENTION_DAYS`，它必须能解析为整数，即使同时传入 `--log-retention-days`。时长参数使用 `10s`、`5m` 等形式。
 
 | 参数 | 环境变量 | 默认值 | 说明 |
 | --- | --- | --- | --- |
@@ -77,68 +69,75 @@ docker compose up -d
 | `--trusted-proxies` | `MODEL_CONFLUENCE_TRUSTED_PROXIES` | 空 | 逗号分隔的可信代理 CIDR |
 | `--connect-timeout` | — | `10s` | 上游连接超时 |
 | `--response-header-timeout` | — | `5m` | 等待上游响应头超时 |
-| `--stream-idle-timeout` | — | `5m` | 上游响应读取空闲超时，流式与非流式生成响应均使用 |
-| `--stream-heartbeat-interval` | — | `0` | SSE 心跳间隔；`0` 关闭心跳 |
+| `--stream-idle-timeout` | — | `5m` | 读取成功状态的上游生成响应时允许的空闲时间，适用于流式和非流式 |
+| `--stream-heartbeat-interval` | — | `0` | SSE 心跳间隔，`0` 关闭，不能为负数 |
 | `--max-request-bytes` | — | `67108864` | 入站生成请求体上限（64 MiB），必须大于 0 |
 | `--log-retention-days` | `MODEL_CONFLUENCE_LOG_RETENTION_DAYS` | `0` | 完整日志载荷保留天数；`0` 永久保留，不能为负数 |
 | `--session-affinity` | — | `false` | 按客户端 `X-Session-ID` 在同一候选内优先复用上次成功的密钥 |
 | — | `MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_ID` | 空 | 签发 Antigravity refresh token 的 OAuth 客户端 ID |
 | — | `MODEL_CONFLUENCE_ANTIGRAVITY_OAUTH_CLIENT_SECRET` | 空 | 上述 OAuth 客户端的 secret，只在运行时注入 |
 
-上游生成请求不设置总时长上限。心跳只能维持客户端连接，不会重置上游读取空闲超时；开启心跳后，HTTP 响应可能在收到模型内容前已发送 `200`，后续错误只能以 SSE 表达。
+心跳不会重置上游读取空闲计时。普通供应商开启心跳后可能在模型输出前发送 HTTP `200`，客户端需通过 SSE 识别后续错误。提交和切换规则见 [流式提交与取消](requirements.md#8-流式提交与取消)。
 
-设置保留天数后，服务启动时及后台定期清理已结束请求的过期正文、头部和错误详情，保留请求与 attempt 元数据及 usage，并标记载荷已清理；过期精简安全事件会删除。该选项不会删除配置中的访问密钥或供应商密钥。使用记录页的「存储管理」提供空间查看、时间范围预览、清空载荷及永久删除记录。操作跳过进行中 request/attempt，分批提交，失败前已完成的批次保留；清理后空闲页供 SQLite 复用，数据库文件通常不会立即缩小，工具签名历史独立保留。
+设置保留天数后，服务在启动时及后台定期按请求创建时间清理过期载荷。需要按时间范围预览、清空载荷或永久删除记录时，使用「使用记录 → 存储管理」。保留范围与分批清理规则见 [载荷生命周期](requirements.md#115-载荷生命周期)。
 
-开启 `--session-affinity` 后，客户端可在同一会话的请求中发送相同 `X-Session-ID`（最多 512 字节）。绑定按访问密钥、候选配置版本和上游协议隔离，成功后续期一小时，上限一万条，重启清空。绑定只调整同一候选内的密钥顺序，不改变候选优先级，不猜测请求正文中的会话归属；密钥不可用时继续执行原故障切换规则，Antigravity 工具历史的账号与模型约束仍优先。没有会话头时沿用原轮询，缓存收益以真实上游 usage 为准。
-
-`GET /healthz` 无需鉴权，仅检查 SQLite 可访问，不探测上游连通性。定义见 [HTTP 装配](../internal/app/app.go)。
+开启 `--session-affinity` 后，在同一会话的请求中发送相同的 `X-Session-ID`，最多 512 字节。密钥选择规则见 [上游密钥](requirements.md#33-上游密钥)。
 
 ## 管理后台与客户端调用
 
-登录管理后台后，创建访问密钥。普通供应商配置完整协议端点和上游密钥；OAuth 供应商按下文导入账号凭据。随后创建虚拟模型及有序候选。客户端的 `model` 使用虚拟模型名。
+登录管理后台后创建访问密钥。普通供应商填写完整协议端点和上游密钥，也可通过「应用模板」填入名称和端点。OAuth 供应商先点击「创建并添加账号」，再登录或导入凭据。随后创建虚拟模型，添加并排序候选。客户端的 `model` 使用虚拟模型名。
 
-供应商与模型路由在独立页面新增、编辑；编辑页支持刷新和直接访问。新增 OAuth 供应商时先点击「创建并添加账号」，再在账号列表登录或导入凭据。模型编辑页左侧调整候选顺序，右侧编辑当前候选。请求详情从使用记录进入宽抽屉，按调用过程选择节点查看载荷。
+编辑候选时可手工填写真实模型名。普通 API Key 和 Antigravity 供应商也可点击「拉取模型」，再从输入框选择。目录按需查询，作用是辅助填入模型名。模型权限需要通过连通性或兼容性验证确认。
 
-模型路由列表展开后可预演协议、流式、工具及并行工具条件，查看各候选或密钥的跳过原因，不发起上游调用。普通协议请求的推理强度原值传给上游，不参与路由白名单筛选。上游健康页分别展示历史失败与当前进程的候选冷却、探测状态；请求详情中的路由快照和选择事件反映当时配置，旧日志可能没有快照。
+展开模型路由可按协议、流式、工具及并行工具条件预演，查看候选和密钥的跳过原因。实际请求的选择过程见使用记录中的路由快照。要查看当前进程的冷却与探测状态，请打开「上游健康」。
 
-「实时路由」页可见时约每秒刷新请求状态。流向图默认显示活跃节点，勾选「显示空闲节点」可查看所有启用节点。点选任一列的节点可筛选相关请求，点选请求 ID 可查看阶段、尝试和切换记录，并打开完整使用记录。高并发时连线按路线聚合，线宽对应请求数。最近结束列表最多保留 10 条、显示最近 5 分钟内当前进程处理的请求。
+「实时路由」页可见时轮询刷新请求状态。开启「显示空闲节点」可同时查看启用的空闲配置。选择节点可筛选请求，选择请求 ID 可查看阶段、尝试与切换记录，并打开完整使用记录。「最近结束」最多显示当前进程在过去 5 分钟内结束的 10 条请求。
 
-模型测试弹窗提供「兼容性验证」，可指定候选、上游协议、入站协议及 SSE。文本场景调用一次上游，工具与并行工具场景连续两轮调用工具，再请求最终文本，共三次请求；测试工具返回收到的参数，不执行外部操作。验证最长两分钟，结果包含时间、实际上游和请求 ID；单次通过不代表其他配置或所有客户端功能兼容。
+模型测试弹窗中的「兼容性验证」可指定候选、上下游协议和流式方式。工具场景连续进行两轮工具调用，再验证最终文本。验证会真实调用上游，最长两分钟，可从结果中的请求 ID 查看详情。普通连通性测试由当前路由选择上游，适合检查虚拟模型是否可调用。
 
-使用记录的「更多筛选」支持状态、供应商、虚拟/真实模型与入站/上游协议；名称精确匹配，上游条件匹配同一次 attempt。详情的「转换差异」按 JSON 路径比较入站与上游请求；「调试重放」可修改原协议正文并通过当前配置与凭据重新发送，沿用原访问密钥身份，产生新请求记录并关联原请求。保留 Anthropic 版本/Beta 与 OpenAI Beta 头，不复用日志中的鉴权、Cookie 或代理来源头。原访问密钥不可用、载荷已清理或请求进行中时不能重放。重放最长两分钟，不执行返回的外部工具。
+在「使用记录」中通过「更多筛选」缩小范围，再从请求详情打开「转换差异」或「调试重放」。重放可编辑原协议正文，使用当前路由真实调用上游并生成关联记录，最长两分钟。筛选口径、重放可用条件及凭据处理见 [使用记录页](requirements.md#123-使用记录页)。
 
-获取模型列表：
+### 模型 API 示例
+
+示例中将 `mc_your_access_key` 换为后台创建的访问密钥，将 `your-virtual-model` 换为配置好的虚拟模型。各协议入口与鉴权规则见 [对外 API](requirements.md#4-对外-api)。
+
+macOS / Linux 可用 curl 查询模型列表和调用 Chat Completions。
+
+```bash
+curl http://127.0.0.1:8080/v1/models \
+  -H "Authorization: Bearer mc_your_access_key"
+
+curl http://127.0.0.1:8080/v1/chat/completions \
+  -H "Authorization: Bearer mc_your_access_key" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"your-virtual-model","messages":[{"role":"user","content":"你好"}],"stream":false}'
+```
+
+Windows 可用 PowerShell 7.3 或更新版本运行以下命令。JSON 参数使用默认的原生命令参数传递方式。见 [PowerShell 参数解析](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_parsing#passing-arguments-that-contain-quote-characters)。
 
 ```powershell
 curl.exe http://127.0.0.1:8080/v1/models `
   -H "Authorization: Bearer mc_your_access_key"
-```
 
-调用 Chat Completions（PowerShell 7.3+，使用[默认原生命令参数传递方式](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.core/about/about_parsing#passing-arguments-that-contain-quote-characters)）：
-
-```powershell
 curl.exe http://127.0.0.1:8080/v1/chat/completions `
   -H "Authorization: Bearer mc_your_access_key" `
   -H "Content-Type: application/json" `
   -d '{"model":"your-virtual-model","messages":[{"role":"user","content":"你好"}],"stream":false}'
 ```
 
-模型 API 接受 `Authorization: Bearer <key>` 或 `x-api-key: <key>`；同时提供且值不一致时拒绝。入口与鉴权定义见 [网关](../internal/gateway/handler.go)。模型列表表示管理员启用的模型，不保证每个模型此刻都有可用路由。
-
-在「模型路由」新建或编辑虚拟模型，选择供应商后，可手动输入真实模型名；普通 API Key 和 Antigravity 供应商支持点击「拉取模型」，再从输入框候选列表选择。模型目录按需请求，不随页面打开自动拉取。普通供应商从生成端点推导列表地址，Antigravity 使用专属元数据接口及已有账号凭据，Codex 不支持此功能。模型目录不表示账号具有相应调用权限，也不会自动创建或同步路由。管理后台的连通性测试针对虚拟模型，经过实际路由选择、转换、密钥池及日志流程；一次成功只说明本次选中的路由可用，不验证所有候选、协议或流式能力。
 
 ### 浏览器登录
 
-在 OAuth 供应商的账号列表点击「登录添加账号」，在弹窗中打开授权页，在 OpenAI 或 Google 页面完成登录。成功后弹窗关闭，账号列表刷新。密码不经过模汇；浏览器登录接口返回登录状态与账号 ID，不返回上游令牌。凭据文件导入接口仍会接收文件中的令牌。
+在 OAuth 供应商的账号列表点击「登录添加账号」，从弹窗打开 OpenAI 或 Google 授权页。授权成功后账号会出现在列表中。
 
-远程或 Docker 部署可以直接回填完整回调 URL，无需 SSH 隧道：保持模汇的登录弹窗打开，在供应商页面授权后，如果浏览器提示无法连接 `127.0.0.1`，复制地址栏的完整 URL，返回模汇粘贴到「完整回调 URL」，点击「提交回调」。后端校验并解析地址，不访问该 URL。回调只可使用一次，过期、已取消或其他登录生成的地址不能提交。
+远程或 Docker 部署可使用回调 URL 回填。保持登录弹窗打开，在供应商页面授权。若浏览器提示无法连接 `127.0.0.1`，复制地址栏的完整 URL，粘贴到模汇的「完整回调 URL」，点击「提交回调」。回填与自动回调共用一次性校验，具体边界见 [上游密钥](requirements.md#33-上游密钥)。
 
 | 供应商 | 临时回调地址 |
 | --- | --- |
 | Codex OAuth | `http://127.0.0.1:1455/auth/callback` |
 | Antigravity OAuth | `http://127.0.0.1:51121/oauth-callback` |
 
-登录使用授权码与 PKCE S256，`state` 一次性校验。每个管理员会话同时允许一个待完成登录，5 分钟过期；取消、超时、成功和失败后释放监听端口及临时凭据。退出管理后台、修改管理员密码或关闭登录组件会取消待完成登录。登录过程只保存在内存，进程重启后重新发起。端口被其他程序占用时明确报错；Codex CLI 或其他实例可能占用 1455。
+每个管理员会话只能发起一个未完成的登录，5 分钟后过期。端口被占用时，先结束使用该回调端口的程序或登录流程。服务重启后需要重新发起登录。
 
 本机浏览器与服务进程处于同一网络环境时，可直接自动回调。远程浏览器中的 `127.0.0.1` 指向用户电脑；若希望远程自动回调，也可先建立 SSH 隧道，并保持连接，再从远程后台发起登录：
 
@@ -146,50 +145,44 @@ curl.exe http://127.0.0.1:8080/v1/chat/completions `
 ssh -N -L 1455:127.0.0.1:1455 -L 51121:127.0.0.1:51121 user@server
 ```
 
-回调服务始终绑定进程所在网络命名空间的回环地址。普通 Docker `-p` 映射不能访问容器回环；Docker 桥接部署建议使用回调 URL 回填。Linux 主机网络部署可按上例转发，其他网络环境使用自动回调时需在同一网络命名空间建立隧道。本版本不提供公网自动回调或设备码登录。
+回调服务绑定进程所在网络命名空间的回环地址。Docker 桥接部署使用回调 URL 回填，因为普通端口映射无法到达容器回环。Linux 主机网络部署可按上例转发。模汇支持本机自动回调和手动回填。
 
 Antigravity 登录仍需配置下文的 OAuth 客户端，并确认它允许表中的回调地址及所需 scope；授权请求包含 `openid`、`userinfo.email` 和 `cloud-platform`，要求离线访问。交换令牌后还会验证 Google 身份和查询项目；缺少 refresh token 或项目时明确失败。配置客户端不代表拥有订阅模型权限。
 
-「登录添加账号」创建新账号，遇到重复账号时明确提示。展开已有账号可选择「重新登录」，使用原 Codex 用户与工作区或原 Antigravity 用户与项目重新授权；凭据按版本替换，保留账号 ID、名称、管理员启停和历史关联，登录期间配置变化则保存失败。登录不会开启已停用的供应商或账号。完整回调 URL、授权码、PKCE verifier、令牌交换响应不进入模型载荷或普通运行日志。手动提交通过有管理员会话及 CSRF 校验的管理 POST 接口处理，输入只在当前页面内存中保留，处理结束后清空。
+已有账号鉴权失效时，在账号展开区选择「重新登录」，使用原 Codex 用户与工作区或原 Antigravity 用户与项目授权，以保留配置和历史关联。`auth_invalid` 的 OAuth 账号需要新凭据。
 
-账号展开区同时显示最近上游额度与限流响应头、真实模型、观测时间和来源请求。没有信号时显示未知；原始值不换算成本地剩余额度，也不主动调用私有额度查询接口。
+在账号展开区可查看最近的额度与限流信号及其来源请求。
 
 ### Antigravity OAuth
 
-此接入为实验性能力，已验证范围见[已知实现差距与兼容边界](requirements.md#17-已知实现差距与兼容边界)。截至 2026-11-04，Google [服务条款第 6 条](https://antigravity.google/terms)禁止通过第三方软件、工具或服务访问，并说明可能暂停或终止 Antigravity、Gemini CLI 账号；企业等接入的适用条款以该页说明为准。接通内部接口不代表官方允许将订阅用于第三方 API 网关。
+此接入为实验性能力。仓库测试与历史线上验收见 [供应商验证边界](requirements.md#172-供应商验证边界)。
+
+Google Antigravity 附加条款第 6 条将通过第三方软件、工具或服务访问列为违约，可能导致 Antigravity 或 Gemini CLI 账号暂停或终止。该页面也列出适用其他条款的企业接入情形。见 [Google Antigravity 附加条款](https://antigravity.google/terms)。
 
 1. 在运行环境注入上述 OAuth client ID 和 secret。它们必须属于签发 refresh token 的客户端；本项目不内置第三方客户端凭据，不轮流尝试其他客户端。自行注册的新客户端不保证拥有 Antigravity 权限。
-2. 在供应商页创建「Antigravity OAuth（实验性）」供应商，然后导入 Antigravity-Manager 导出的账号 JSON。支持 `{"accounts":[{"email":"user@example.com","refresh_token":"请替换"}]}`、单个账号项及含 `token.refresh_token` 的完整账号文件；可附带 `client_id` 检查绑定。上传限 1 MiB，每个文件最多 100 个账号，批量导入分别返回成功项和失败原因。文件中的身份和项目不作为鉴权依据。
-3. 导入会刷新令牌、验证 Google 身份，并通过 `loadCodeAssist` 查询项目。账号应先在 Antigravity 完成初始化；没有真实项目时明确失败。完整账号文件中的 `oauth_client_key` 是外部应用的本地标识，不能代替 OAuth client ID；缺少 `client_id` 时使用运行配置中的唯一客户端。
-4. 创建虚拟模型候选，选择 Antigravity 上游入口，填写真实模型名及输出 Token 限制。可手动拉取模型目录；不会自动创建路由。客户端继续使用现有 Chat Completions、Responses 或 Messages 入口。
+2. 在供应商页创建「Antigravity OAuth（实验性）」供应商。可使用浏览器登录，或导入 Antigravity-Manager 导出的账号 JSON。支持 `{"accounts":[{"email":"user@example.com","refresh_token":"请替换"}]}`、单个账号项及含 `token.refresh_token` 的完整账号文件。每次上传请求含一个文件，multipart 请求体上限为 1 MiB，每个文件最多 100 个账号。
+3. 账号需先在 Antigravity 完成初始化。导入会向 Google 验证身份和查询项目，文件中的账号、项目及 `oauth_client_key` 无法替代这项校验。文件若提供 `client_id`，必须与运行配置一致。
+4. 创建虚拟模型候选，选择 Antigravity 上游入口，填写真实模型名和输出 Token 限制。客户端沿用 [现有模型 API](requirements.md#4-对外-api)。
 
-本版本支持文本、SSE、非流式聚合、function 工具定义及工具历史、base64/data URL 图片输入。网关在工具历史保存成功后返回 `call_ag_` 前缀的调用 ID；客户端按原协议保留响应文本、完整 assistant 工具调用和工具结果，并行调用须完整保留在同一条 assistant 消息中。下一轮由网关恢复上游签名，客户端无需回传额外签名字段。设计原因见[供应商例外](requirements.md#63-严格转换与供应商例外)。
-
-工具历史绑定访问密钥、供应商、账号及真实模型，后续请求只能使用兼容路由。历史不随日志保留天数自动过期，重启或日志载荷清理后仍保留。丢失记录、切换访问密钥、修改原响应文本或工具调用、缺少并行调用时明确失败。
+支持文本、SSE、非流式聚合、function 工具和 base64/data URL 图片。多轮工具调用时，客户端按原协议回传响应文本、完整 assistant 工具调用和工具结果。并行调用须保留在同一条 assistant 消息中。签名历史及路由绑定规则见 [供应商例外](requirements.md#63-严格转换与供应商例外)。
 
 远程图片 URL、显式推理配置、客户端直接提交的受保护思考历史、Responses 的 custom/shell/apply_patch 工具、`strict:true` 和禁止并行工具的控制暂不支持；无法转换时明确报错，不静默删减。不能据此承诺 Codex、Claude Code 默认参数可直接使用，也不能承诺所有订阅模型均兼容。上游协议、参数校验及终止语义以[请求适配](../internal/protocol/antigravity_request.go)和[响应适配](../internal/protocol/antigravity_response.go)为准。
 
-上游始终使用 SSE；非流式客户端收到聚合 JSON。401 在首内容前最多触发一次刷新重发；429 按账号与真实模型保存冷却，优先读取结构化 `RetryInfo` 或 `Retry-After`，无恢复信号时冷却一分钟。上游健康页显示模型冷却，可清除此账号的模型冷却。刷新不会开启手工停用的账号；明确的 `invalid_grant` 或刷新后持续 401 需要重新登录。删除账号清空当前凭据并归档，历史载荷仍按日志保留策略保存。
-
-生成请求和 Authorization access token 遵循既有明文日志契约；OAuth 刷新正文、refresh token 和完整导入文件不进入模型载荷或运行日志。工具历史含原始响应及签名，同样需要保护数据目录。浏览器登录见上文；IDE 账号切换不在本版本内。
+上游健康页显示账号的模型冷却，可按账号清除。401、429 和刷新失败的处理见 [上游失败与故障切换](requirements.md#9-上游失败密钥池与故障切换)。
 
 ### Codex OAuth 账号
 
 1. 在外部 Codex CLI 登录 ChatGPT，并使用文件存储获得 `auth.json`；codex-deck 导出相同格式也可导入。CLI 文件存储配置见 [官方认证说明](https://learn.chatgpt.com/docs/auth)。建议为网关使用独立登录会话，避免 CLI、codex-deck 和网关争用 refresh token。
-2. 在供应商页选择「Codex OAuth」，填写名称并保存。随后上传 auth.json，批量选择会逐个上传。上传请求限 1 MiB，格式、身份或重复账号错误会明确显示；导入成功表示格式可读，不代表模型权限已通过验证。
+2. 在供应商页选择「Codex OAuth」，填写名称并保存。可使用浏览器登录，或上传 `auth.json`。批量选择时逐个上传，每次 multipart 请求体上限为 1 MiB。
 3. 创建虚拟模型候选，选择该供应商及 Responses 上游入口，手工填写真实模型名。Codex 不提供模型列表拉取和输出 Token 限额配置。使用虚拟模型连通性测试检查实际路由，客户端可继续使用现有三个入口。
 
-网关将当前凭据保存在 SQLite，按需刷新，不读取或回写用户本地文件。也可按上文直接在后台发起浏览器登录。访问令牌到期不等于账号永久失效。鉴权失效时可在账号展开区原位重新登录；运行状态重置无法修复永久失效的刷新令牌。不提供手工凭据编辑、复制或导出。
-
-账号支持启停与删除，可删除最后一个账号。同用户、工作区的未删除账号在实例内不能重复上传，也不能用上传覆盖令牌。删除清空当前凭据并保留历史引用，不撤销 OpenAI 会话。模型历史日志可能保存旧 access token，继续按载荷保留策略处理。
-
-Codex 忽略长度、采样等明确列出的参数，集合与边界见 [供应商例外](requirements.md#63-严格转换与供应商例外)。详情展示本次忽略路径、实际上游 SSE 和最终客户端响应。非流式客户端收到聚合 JSON；服务端会话字段仍受无状态边界限制。
+在请求详情可查看 Codex 忽略的参数路径、上游 SSE 和最终客户端响应。忽略条件与字段来源见 [供应商例外](requirements.md#63-严格转换与供应商例外)。
 
 ## 数据与远程访问
 
-数据库位于数据目录下的 `model-confluence.db`，同目录可能出现 WAL 文件。请求正文压缩不等于加密；数据库、日志下载及截图都可能包含提示词、代码和完整凭据。限制数据目录的系统访问权限，不将这些内容提交到 Git。
+数据库位于数据目录下的 `model-confluence.db`，同目录可能出现 WAL 文件。限制数据目录与载荷导出的访问权限，提交截图时使用演示数据。明文凭据与载荷的存储约定见 [记录模型](requirements.md#111-记录模型)。
 
-管理会话使用 Secure、SameSite Strict Cookie 和 CSRF 防护。远程访问应使用 HTTPS 反向代理，并将管理后台与 `/api` 保持同源；普通远程 HTTP 地址无法正常维持登录态。本地开发使用 README 中的 localhost 地址。
+远程访问时，在 HTTPS 反向代理上为管理后台和 `/api` 使用同一域名。管理会话使用 Secure Cookie，本机可访问 `localhost`。会话与 CSRF 规则见 [登录](requirements.md#121-登录)。
 
 客户端 IP 当前只从可信 TCP 对端提供的 `X-Forwarded-For` 解析；代理不在 `--trusted-proxies` 中时使用 TCP 对端地址。请让反向代理正确处理该头，不要依赖 `Forwarded`。实现见 [客户端 IP 解析](../internal/httpx/httpx.go)。
 
@@ -208,7 +201,29 @@ MODEL_CONFLUENCE_ADMIN_PASSWORD="新的管理员密码" ./model-confluence admin
 
 ## 开发与构建
 
-开发启动步骤见 [README](../README.md#本地开发)。依赖版本以 [go.mod](../go.mod)、[package.json](../web/package.json) 和 pnpm 锁文件为准，构建使用的 Node.js / pnpm 版本见发布工作流。Vite 将 `/api` 和 `/healthz` 代理到后端，配置在 [vite.config.ts](../web/vite.config.ts)；模型 API 可直接调用后端地址。
+Go 与前端依赖分别见 [go.mod](../go.mod)、[package.json](../web/package.json) 和 [pnpm 锁文件](../web/pnpm-lock.yaml)。Node.js 与 pnpm 版本见 [发布工作流](../.github/workflows/release.yml)。
+
+在项目根目录启动开发后端。macOS / Linux 使用以下命令。
+
+```bash
+MODEL_CONFLUENCE_ADMIN_PASSWORD="请替换为管理员密码" go run ./cmd/model-confluence --listen 127.0.0.1:8080
+```
+
+Windows PowerShell 使用以下命令。
+
+```powershell
+$env:MODEL_CONFLUENCE_ADMIN_PASSWORD = "请替换为管理员密码"
+go run ./cmd/model-confluence --listen 127.0.0.1:8080
+```
+
+另开一个终端，在项目根目录运行以下命令。
+
+```text
+pnpm --dir web install --frozen-lockfile
+pnpm --dir web dev
+```
+
+用浏览器打开 Vite 输出的本机地址。Vite 将管理 API 和健康检查代理到后端，后端地址见 [Vite 配置](../web/vite.config.ts)。模型 API 直接访问后端。
 
 构建含管理后台的 Windows 单文件版本：
 
@@ -220,9 +235,9 @@ cd ..
 go build -tags embedded_ui -o model-confluence.exe ./cmd/model-confluence
 ```
 
-前端构建将资源写入 `internal/webui/dist`，随后由 Go 嵌入。不要手工编辑该目录；普通 `go run` / `go build` / `go test` 不带 `embedded_ui` 时使用占位页，无需前端产物。运行正式版本不依赖 Node.js。
+前端产物由 Vite 生成，再通过 `embedded_ui` 标签嵌入 Go 程序。普通 Go 开发与测试使用占位页。构建路径见 [Vite 配置](../web/vite.config.ts) 和 [资源嵌入](../internal/webui/embed.go)。
 
-按变更影响选择验证：后端相关包使用 `go test ./internal/<package>`，前端使用 `pnpm --dir web build`；需要整体后端验证时运行 `go test ./...`。文档和注释变更核对事实、链接、示例及最终 diff，无需编译或重建资源。协议转换验证应覆盖受影响方向的请求、响应、流式和多轮历史，不能用单次连通性测试代替。
+后端可用 `go test ./internal/<package>` 或 `go test ./...` 验证，前端使用 `pnpm --dir web build`。协议转换的验收场景见 [核心验收目标](requirements.md#16-核心验收目标)。
 
 ## 发布
 
@@ -246,8 +261,8 @@ git tag -a "v$next_version" -m "Release v$next_version"
 git push origin "v$next_version"
 ```
 
-发布由 `vX.Y.Z` Git 标签触发。工作流先校验版本、日志、目标提交属于 `main` 及 Release 状态，再重新构建前端、运行 Go 测试、构建嵌入后台的二进制归档和多架构容器，并生成校验文件。GitHub Release 正文原样读取仓库版本日志，先创建草稿并上传完整附件，再公开并标记 Latest。失败重跑可继续同版本未公开草稿，已公开版本拒绝覆盖；容器推送发生在 Release 公开前，草稿流程不保证两者同时发布。发布目标、工具版本和构建命令以 [发布工作流](../.github/workflows/release.yml) 与 Dockerfile 为准。
+发布由 `vX.Y.Z` Git 标签触发。工作流从源码构建、测试并打包，使用仓库版本日志作为 Release 正文。草稿机制允许重跑时补齐未公开版本的附件，公开后需发布新版本。容器镜像先于 GitHub Release 发布。执行顺序见 [发布工作流](../.github/workflows/release.yml)。
 
 仓库日志从 1.9.4 开始维护，较早版本继续查看 [GitHub Releases](https://github.com/Sanjeever/model-confluence/releases)。已公开日志保留当时语义，后续修复通过新版本交付。
 
-仅在明确执行发布任务时创建和推送版本标签。管理员密码和供应商凭据不进入构建或发布产物，部署时再注入。
+管理员密码和供应商凭据在部署时注入。

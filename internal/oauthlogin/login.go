@@ -285,7 +285,7 @@ func (m *Manager) Cancel(owner string, providerID int64, id string) bool {
 	return true
 }
 
-// CancelOwner 的空 owner 表示取消全部登录，用于退出或修改管理员密码。
+// CancelOwner 终止指定管理员会话待完成的登录。空 owner 匹配所有会话。
 func (m *Manager) CancelOwner(owner string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

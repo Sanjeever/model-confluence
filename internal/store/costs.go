@@ -36,7 +36,7 @@ type UsagePage struct {
 	Summary UsageSummary `json:"summary"`
 }
 
-// UsageBreakdown 仅汇总已完成请求的已知用量，按 UTC 日期和最终路由分组；缺失指标不参与求和。
+// UsageBreakdown 按 UTC 日期和最终路由汇总成功请求报告的 Token 用量。
 func (s *Store) UsageBreakdown(ctx context.Context, createdFrom, createdTo time.Time, virtualModel string) (UsagePage, error) {
 	where := "r.created_at >= ? AND r.created_at < ?"
 	args := []any{formatTime(createdFrom), formatTime(createdTo)}

@@ -121,8 +121,7 @@ const maxModelsBodyBytes = 8 << 20
 
 var modelsEndpointSuffixes = []string{"/chat/completions", "/responses", "/messages"}
 
-// ListProviderModels 从普通供应商的生成端点推导兼容模型列表地址；
-// Antigravity 使用专属元数据接口，Codex 不提供模型列表。
+// ListProviderModels 获取供配置候选时参考的目录，模型调用权限由上游在生成时校验。
 func (h *Handler) ListProviderModels(ctx context.Context, providerID int64) ([]string, error) {
 	provider, err := h.store.ProviderByID(providerID)
 	if err != nil {

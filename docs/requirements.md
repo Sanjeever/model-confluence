@@ -2,9 +2,7 @@
 
 本文档维护产品边界、领域契约、架构约束和已接受的安全取舍，作为后续设计与开发的依据。首版于 2026-08-11 冻结；后续明确采用的能力和决策在对应章节维护，不与发布版本号逐次绑定。
 
-正文的「必须」「禁止」及验收条目表达设计要求，不代表实现已经全部满足。冻结的规划能力集中在第 14 节；已确认的实现差距集中在第 17 节。当前实现行为以代码、schema 和相关测试为依据，运行步骤与配置默认值见 [运行与开发](operations.md)。
-
-发生冲突时，区分过时的实现描述与仍有效的设计约束；实现缺口不能自动成为新契约，设计要求也不授权 Agent 顺手补齐功能。重大决策变化应在相关章节保留原因与适用边界，不必为局部实现另建 ADR 或维护一份重复的字段表。
+正文和验收条目定义设计目标。规划范围见 [冻结能力与非目标](#14-冻结能力与非目标)，当前行为与验证证据见 [已知实现差距与兼容边界](#17-已知实现差距与兼容边界)，运行步骤与配置默认值见 [运行与开发](operations.md)。
 
 ## 1. 产品定义
 
@@ -23,11 +21,9 @@
 ## 2. 用户与部署边界
 
 - 仅面向单管理员、个人私有实例，不实现用户、团队、租户和角色体系。
-- 远程访问经 HTTPS 反向代理，TLS 由 Caddy、Nginx 等反向代理终止；应用自身只提供 HTTP，本机可直接使用 localhost。
-- 本机部署默认仅绑定回环地址；远程访问通过反向代理，实际监听配置见运行与开发文档。
+- 应用提供 HTTP，本机可通过回环地址访问。远程访问由反向代理终止 TLS，部署方式见 [数据与远程访问](operations.md#数据与远程访问)。
 - 只有显式配置的可信代理 CIDR 才能提供可信的 `Forwarded` 或 `X-Forwarded-For` 信息；其他请求使用 TCP 对端地址。
-- 二进制与容器发布目标由发布工作流维护，用户选择对应平台产物；运行不依赖 Node.js。
-- 发布物只有一个可执行文件。运行时允许产生 SQLite、WAL 和必要的临时文件；前端资源和数据库迁移必须嵌入可执行文件。
+- 每个平台归档包含一个可执行文件。前端资源和数据库迁移随程序交付，运行无需 Node.js。可执行文件所在目录与 SQLite 数据目录可独立管理。
 - 不支持多个进程或多个实例共享同一个 SQLite 数据库，也不做横向扩容。
 
 ## 3. 名词与数据关系
@@ -38,13 +34,11 @@
 
 访问密钥具有独立启停、可选过期时间和归档生命周期。最后使用信息用于管理观察，不构成权限或配额限制；字段与持久化定义见 [schema](../internal/store/migrations.go)。
 
-三个生成端点均接受 `Authorization: Bearer <key>` 和 `x-api-key: <key>`。两种头同时存在且值不一致时拒绝请求。
-
 ### 3.2 供应商
 
 供应商表示一组共享鉴权方式、上游密钥池和协议端点的 HTTP 服务。
 
-供应商类型创建后不可转换。普通供应商（`generic`）配置鉴权方式（Bearer、`x-api-key` 或自定义头）、静态头、各协议完整请求 URL、密钥池和额度耗尽错误码精确列表。
+供应商类型创建后不可转换。普通供应商（`generic`）配置各协议完整 URL、鉴权方式、静态头、密钥池和额度耗尽错误码。支持的配置字段见 [供应商类型](../internal/store/catalog.go)。
 
 Codex OAuth（`codex_oauth`）使用固定 Codex Responses 后端和 ChatGPT OAuth 账号池，不开放协议端点、静态鉴权和令牌编辑。三个客户端入口均可路由到该 Responses 上游。真实模型名手工填写，不拉取模型列表。
 
@@ -60,17 +54,17 @@ Antigravity OAuth（`antigravity_oauth`）是实验性原生供应商，使用 G
 
 可选会话粘性通过 `X-Session-ID` 在同一候选及协议入口内优先使用该会话上次成功的密钥，不改变候选优先级、能力校验或 Antigravity 历史绑定。绑定按访问密钥与候选配置版本隔离，成功请求续期一小时，最多一万条；无标识时沿用轮询。不可用密钥仍被过滤，安全切换成功后重绑，失败请求不更新绑定；重启清空。开启方式见运行说明，不承诺供应商缓存命中。
 
-Codex OAuth 账号通过浏览器登录，或管理员上传原生 ChatGPT `auth.json`、codex-deck 导出文件建立。允许空账号池和删除最后一个账号；同用户、工作区的未删除账号在实例内拒绝重复添加。管理 API 返回来源、身份、令牌到期、刷新时间及运行状态，不返回原始文件或令牌。JWT 解码用于元数据，不验证签名，也不代表模型调用权限已验证。
+OAuth 账号可通过浏览器登录或导入文件建立，允许空账号池。Codex 同一用户和工作区的未归档账号在实例内唯一。管理 API 返回账号元数据和运行状态，凭据留在服务端。Codex 从 JWT 提取的字段用于展示和识别账号，模型调用权限由上游判断。
 
 两个 OAuth 供应商的浏览器登录统一使用授权码、PKCE S256 和临时回环回调。登录会话绑定发起的管理员会话及供应商，`state` 随机且只能消费一次。令牌交换不阻塞取消；取消、到期或管理员会话失效后不得保存账号，保存时须确认供应商仍存在且类型一致。临时秘密只保存在内存，结束后清除并释放端口，不修改用户本地凭据。端口、时限及部署方式见[浏览器登录](operations.md#浏览器登录)。
 
-管理员可在原登录弹窗中提交完整回调 URL，供远程及 Docker 部署使用；管理 API 要求管理员会话和 CSRF，校验登录归属及 URL 的 scheme、host、port、path、单一 `state`、授权码和提供的 issuer。后端只解析 URL，不访问输入地址；仍向固定供应商端点发送授权码与原 PKCE verifier。手动提交与自动回调共享一次性校验和状态锁，不能重复交换或重复保存。无效 URL 的错误不回显原文；完整地址及授权码不进入日志或持久化会话。
+远程及 Docker 部署可通过管理 API 回填完整回调 URL。回填校验管理员会话、CSRF、登录归属及回调地址，与自动回调共用一次性授权结果。服务只向固定供应商端点交换授权码。回调 URL 和临时凭据留在内存，错误信息不回显原文。校验字段见 [OAuth 登录会话](../internal/oauthlogin/login.go)。
 
-当前凭据保存在 SQLite。请求前按需提前刷新，每个账号串行执行，进入锁后重读当前凭据；刷新网络请求不持有事务，写回按凭据版本及活动、启用状态检查。刷新不改变管理员启停。确定性刷新失效持久标记 `auth_invalid`；网络故障、取消和 5xx 不永久淘汰账号。已过期 access token 仍可通过刷新使用。刷新与旧模型调用的状态回写均不能覆盖新配置或已删除账号。
+凭据保存在 SQLite。单个账号串行刷新，网络请求在事务外执行，以免刷新阻塞数据库。写回受凭据版本及归档、启停状态约束，防止旧请求覆盖新凭据或恢复已停用、归档的账号。明确的凭据失效持久标记为 `auth_invalid`，临时网络故障、取消和 5xx 保留账号以便后续使用。
 
 删除清空当前 OAuth 凭据并归档账号，保留身份和日志引用。删除不撤销上游会话、不删除用户本地源文件；既有历史载荷仍按保留策略存储，可能包含旧 access token。鉴权失效可原位重新登录，校验相同 Codex 用户/工作区或 Antigravity 用户/项目后按凭据版本替换，保留账号 ID、名称、管理员启停与历史关联；登录期间配置变化则拒绝保存。状态重置不能修复失效凭据。
 
-账号展开区展示最近上游响应中的额度/限流头及观测时间、真实模型、来源请求。字段按上游原文展示，没有信号时显示未知，不从本地 Token 推算剩余额度，也不主动轮询供应商私有额度接口。历史观测不表示当前保证可用。
+账号展开区保留最近的上游额度和限流响应头、观测时间及来源请求。缺少信号时显示未知。额度信号来自已发生的请求，禁止主动轮询供应商私有接口或根据本地 Token 估算剩余额度。
 
 ### 3.4 虚拟模型与候选
 
@@ -86,17 +80,17 @@ Antigravity 候选仅使用内部 Antigravity 入口，执行候选默认输出 
 
 ## 4. 对外 API
 
-所有模型 API 都需要访问密钥鉴权。
+模型 API 接受 `Authorization: Bearer <key>` 或 `x-api-key: <key>`。两处同时提供非空密钥时，值必须相同。入口与鉴权见 [网关](../internal/gateway/handler.go)。
 
 | 方法 | 路径 | 客户端协议 | 支持范围 |
 | --- | --- | --- | --- |
 | POST | `/v1/chat/completions` | OpenAI Chat Completions | 流式与非流式 |
 | POST | `/v1/responses` | OpenAI Responses | HTTP 与 SSE，不支持 WebSocket |
 | POST | `/v1/messages` | Anthropic Messages | 流式与非流式 |
-| GET | `/v1/models` | OpenAI 兼容模型列表 | 返回已启用虚拟模型 |
+| GET | `/v1/models` | OpenAI 兼容模型列表 | 虚拟模型目录 |
 | GET | `/healthz` | 最小健康检查 | 无需鉴权 |
 
-`/healthz` 只检查进程已经启动且 SQLite 可访问，不探测上游，也不返回供应商配置。
+`/healthz` 检查 SQLite 可访问。上游连通性在管理后台单独验证。路由定义见 [HTTP 装配](../internal/app/app.go)。
 
 模型列表用于展示管理员启用且有已配置候选的虚拟模型，不以实时健康筛选，避免临时限流或故障冷却导致列表闪烁。当前列表查询与候选存在性要求的差距见第 17 节。
 
@@ -104,17 +98,7 @@ Antigravity 候选仅使用内部 Antigravity 入口，执行候选默认输出 
 
 ## 5. 协议路由矩阵
 
-| 客户端端点 | 客户端协议 | 上游协议 | 行为 |
-| --- | --- | --- | --- |
-| `/v1/chat/completions` | Chat Completions | Chat Completions | 治理式透传 |
-| `/v1/chat/completions` | Chat Completions | Responses | 双向转换 |
-| `/v1/chat/completions` | Chat Completions | Messages | 双向转换 |
-| `/v1/responses` | Responses | Responses | 治理式透传 |
-| `/v1/responses` | Responses | Chat Completions | 双向转换 |
-| `/v1/responses` | Responses | Messages | 双向转换 |
-| `/v1/messages` | Messages | Messages | 治理式透传 |
-| `/v1/messages` | Messages | Chat Completions | 双向转换 |
-| `/v1/messages` | Messages | Responses | 双向转换 |
+[对外 API](#4-对外-api) 的三个生成协议均可作为普通供应商的上游协议。三个同协议组合走治理式透传，六个跨协议方向分别转换请求和响应。供应商专属入口遵循 [供应商例外](#63-严格转换与供应商例外)。
 
 治理式透传仍会替换上游鉴权、将虚拟模型名改为真实模型名、合并供应商静态头、采集 usage、记录日志，并在客户端响应中把模型名改回虚拟模型名。除此之外，请求体、响应状态、响应体和流式事件尽量保持上游原样。
 
@@ -143,7 +127,7 @@ Responses 的 `custom`、`shell` 和 `apply_patch` 在目标协议中规范化�
 
 Chat Completions / Messages 的工具定义转换到 Responses 时，未声明 `strict` 的工具显式设置 `strict:false`，避免目标端按默认严格模式校验原 schema；Chat Completions 显式提供的 `strict` 值继续保留。依据见 [转换测试](../internal/protocol/request_test.go)。
 
-各厂商对推理强度的取值和语义定义不同，网关不维护档位白名单，不做就近映射或别名转换。同协议保留原字段；Chat Completions、Responses 和 Messages 跨协议时，在 `reasoning_effort`、`reasoning.effort` 与 `output_config.effort` 之间转换字段位置并保留字符串原值，由上游判断是否支持，不承诺相同字符串在不同厂商间语义等价。此规则不扩展 Antigravity 专属适配器的能力。使用记录保存客户端请求值，实际发送值可从上游请求载荷查看。
+各厂商对推理强度的取值和语义定义不同，网关保留字符串原值，让上游判断是否支持。跨协议仅在 `reasoning_effort`、`reasoning.effort` 与 `output_config.effort` 之间映射字段位置，Antigravity 专属适配器拒绝显式推理强度。继续采用原值传递是为了支持新档位及供应商自定义值。见 [变更记录](releases/1.9.8.md)。
 
 OpenAI 的 system/developer 与 Anthropic 顶层 system 不完全等价。首版只允许对话开头的高优先级指令，按原顺序折叠到目标协议的最高优先级指令区；对话中途出现 system/developer 指令时拒绝。
 
@@ -203,13 +187,16 @@ Codex OAuth 使用固定订阅后端，为兼容该后端忽略输出长度、�
 
 ## 8. 流式提交与取消
 
-流式提交是重放安全边界：客户端一旦看到有效内容，再接入第二个响应会破坏文本与工具调用的一致性。以下为设计要求；当前 HTTP 提交、元事件与心跳的差异见第 17 节。
+首个有效内容是切换上游的安全边界。客户端收到文本或工具调用后，再接入第二个响应会破坏上下文和工具调用的一致性。
 
 - 为保留首内容前的故障切换能力，网关缓冲响应头和 created/start 等无内容事件。
 - 收到首个可验证的文本或工具调用增量时，一次性写出已缓冲事件；该时刻称为流式提交点。
-- 流式提交后禁止切换密钥、候选或拼接第二个上游响应。
+- 首内容提交后禁止切换密钥、候选或拼接第二个上游响应。
 - 客户端断开后立即取消上游，不再故障切换，保存已获得的部分载荷并将请求标记为 `cancelled`。
-- 实时路由通过轮询显示进行中的请求阶段和实际上游。后台不提供取消按钮，也不实时尾随响应正文。完整载荷在 attempt 结束后展示。
+
+普通供应商启用可选 SSE 心跳时，允许在首内容前发送心跳并提前固定 HTTP `200`，以维持等待上游期间的客户端连接。仅发出心跳时，遇到可切换的失败仍可尝试下一个上游。若最终失败，网关以 SSE 错误结束连接。见 [心跳测试](../internal/gateway/handler_test.go)。
+
+普通供应商在首内容前写出上游响应头或元事件的其他提交路径见 [实现缺口](#171-实现缺口)。
 
 Codex 上游始终使用 SSE。非流式客户端通过终止 response 和真实 `output_item.done` 聚合 JSON，不以展示摘要重建响应。`response.completed` 及合法的 `response.incomplete` 部分结果可结束请求；`response.failed`、error 或没有终止事件的 EOF 作为失败。Codex 的 created 等元事件缓冲到首内容，心跳在提交后发送；提交前可切换，提交后失败发送客户端协议错误并结束。
 
@@ -244,11 +231,11 @@ Antigravity 的 HTTP 与 SSE 结构化错误统一分类；首内容前 401 最�
 
 ## 10. 错误响应
 
-以下是统一错误契约；鉴权或请求体读取阶段的实现例外见第 17 节。
+以下是统一错误契约。鉴权及读取阶段的差距见 [实现缺口](#171-实现缺口)。
 
 - 网关自身错误和经过转换的上游错误始终使用客户端入站协议的标准错误结构。
 - 错误必须包含网关 `request_id`。
-- 流式提交前保留合适的 HTTP 状态码；提交后只能发送客户端协议允许的错误事件并关闭连接。
+- HTTP 响应提交前使用对应的状态码，提交后以客户端协议允许的错误事件结束流。提前发出心跳的 HTTP 状态规则见 [流式提交与取消](#8-流式提交与取消)。
 - 上游原始状态、响应头和正文保存在 attempt 中，不直接把错误协议返回给客户端。
 - 禁止吞错、返回默认假响应或静默切换到未配置模型。
 
@@ -271,11 +258,9 @@ Antigravity 的 HTTP 与 SSE 结构化错误统一分类；首内容前 401 最�
 
 这是为私有实例排查和审计接受的风险：SQLite、快照或载荷下载泄露等同于其中的提示词、源代码和凭据泄露。压缩不构成加密；不要擅自将明文查看能力改成脱敏 API。
 
-OAuth 刷新请求、token 响应和完整 auth.json 不进入模型载荷日志或普通运行日志。模型调用的 Authorization access token 按既有明文日志契约保存。request.stream 表示客户端方式，attempt.upstream_stream 表示实际传输；非流式客户端的 Codex attempt 保存原始 SSE，request 保存最终 JSON。attempt 的忽略参数路径贯通持久化、管理 JSON 和详情展示。
+OAuth 刷新请求、token 响应和完整导入文件不进入模型载荷或普通运行日志。模型调用的 Authorization access token 仍按明文日志契约保存。请求与尝试分别记录传输方式和载荷，以区分客户端聚合 JSON 与实际的上游 SSE。
 
 无效或缺失访问密钥的请求不保存完整正文和凭据，只记录精简安全事件：时间、IP、User-Agent、端点和失败原因，防止未授权访问者灌满数据库。
-
-进程崩溃或被终止时遗留的 `in_progress` 请求与 attempt 在下次启动时统一标记为 `failed`，不会永久停留在进行中状态。
 
 ### 11.2 元数据
 
@@ -314,16 +299,15 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 
 ### 11.5 载荷生命周期
 
-默认保留完整载荷；管理员配置保留期后，过期已结束请求清空正文、头部和错误详情，保留结构化请求与 attempt 元数据和 usage，且明确标记载荷已清理。过期精简安全事件可以删除，进行中的请求不能被清理。参数与运行方式见 [运行与开发](operations.md#运行参数)。
+配置保留期后，按请求创建时间识别过期记录。自动清理清空正文、头部和错误详情，保留 request、attempt 元数据及 usage，并标记载荷已清理。过期精简安全事件可删除。进行中的请求和 attempt 应免于清理，自动路径的检查差距见 [实现缺口](#171-实现缺口)。启用方式见 [运行参数](operations.md#运行参数)。
 
-进程中断遗留记录在启动时收尾，使其可以进入保留期清理和统计。使用记录页的存储管理可查看数据库、WAL、可复用空间、保留期和最近清理结果；按明确时间范围预览并清空载荷或删除记录及 attempts。清理分批事务执行，跳过进行中 request/attempt，保留 Antigravity 工具历史；中途失败保留已完成批次并报告数量。删除数据后的空闲页供 SQLite 复用，不保证立即缩小文件。JSONL 导出属于第 14 节冻结能力。
+每个数据库由一个进程使用。启动时将遗留的 `in_progress` 请求与 attempt 标记为 `failed`，使其进入保留期清理和统计。
+
+手动清理按时间范围预览，可清空载荷或永久删除记录及 attempts。分批事务限制单次写入量，失败时保留已完成批次并报告数量。空闲页由 SQLite 复用，文件大小通常不会立即变化。Antigravity 签名历史独立保存，见 [供应商例外](#63-严格转换与供应商例外)。
 
 ## 12. 管理后台
 
-技术栈：React、TypeScript、Vite、shadcn/ui、React Hook Form、TanStack Query / Table、Tailwind CSS。
-
-- shadcn/ui 提供项目内维护的交互组件；React Hook Form 管理表单与校验，TanStack Table 负责表格行列，TanStack Query 负责服务端数据与缓存。
-- Tailwind 负责布局与组件样式，颜色和深浅主题统一使用语义变量；变量定义见 [全局样式](../web/src/styles.css)。
+- 交互组件在仓库内维护。依赖以 [前端清单](../web/package.json) 为准，深浅主题共用 [全局样式](../web/src/styles.css) 中的语义变量。
 - 简体中文界面，协议名、JSON 字段和错误码保留英文。
 - 桌面优先，提供基础平板响应式；不把复杂编辑流程适配到手机。
 - 支持浅色、深色跟随系统和手动切换。
@@ -337,24 +321,17 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 - 修改或重置密码后撤销全部现有会话。
 - 按可信客户端 IP 计算，15 分钟内最多 5 次失败；成功登录清零，限速状态只存内存。
 
-空数据库首次启动必须通过环境变量或命令行参数提供初始管理员密码，应用只保存密码哈希。忘记密码时停服执行 `model-confluence admin reset-password`，直接更新指定 SQLite 并撤销全部会话。不实现邮件或网页找回。
+首次启动与离线密码重置见 [运行与开发](operations.md#数据与远程访问)。密码找回范围限于本机管理员重置。
 
 ### 12.2 导航模块
 
-1. 性能监控；
-2. 实时路由；
-3. 使用记录；
-4. 用量统计；
-5. 上游健康；
-6. 访问密钥；
-7. 供应商；
-8. 模型路由。
+性能监控按请求创建时间统计，成功率分母为已结束请求，延迟分位数使用有值的成功样本。用量统计只汇总成功请求报告的 Token，按 UTC 日期和最终路由分组。日期选择按浏览器时区换算查询范围，因此时区不同于 UTC 时，结果中的 UTC 日期可与所选的本地日期不同。见 [性能查询](../internal/store/performance.go)、[用量查询](../internal/store/costs.go) 和 [统计测试](../internal/store/analytics_test.go)。
 
-性能监控页按日期范围展示请求数、成功率、首内容与总耗时 P95、状态分布和异常与慢请求列表。用量统计按日期和模型汇总已完成请求的已知 Token 用量，不做金额估算；查询口径见 [用量聚合](../internal/store/costs.go)。上游健康页分别展示密钥池状态、候选历史失败及网关实时冷却。无可用路由汇总不表示特定请求的能力匹配；模型列表展开后可预演协议、流式、工具和并行工具条件，不调用上游或占用探测。请求详情保存当时的路由快照与选择、冷却跳过事件，实际调用结果通过 attempts 查看；旧记录没有路由快照。
+上游健康分别展示当前可用性状态和历史失败。模型路由预演按输入条件解释候选与密钥的取舍，不调用上游或占用探测机会。请求详情保留当时的路由快照和选择事件，实际调用结果见 attempts。旧记录可能没有路由快照。
 
-实时路由以当前网关进程的已记录请求为来源，展示访问密钥、虚拟模型和实际上游之间的活跃流量。当前上游在 attempt 入账后出现，并随故障切换更新。同一路径的连线按请求数聚合，高密度时以灰线显示总览，点选节点或请求后突出相关路径。流式请求成功写出可识别的有效内容后显示「输出中」，心跳和元事件不计入。普通非流式请求可显示接收响应，非流式 Codex / Antigravity 请求可显示聚合上游响应。
+实时路由从当前进程已建立日志的请求收集状态，在 attempt 写入后显示实际上游，并随故障切换更新。首次成功写出可识别的流式文本或工具内容后显示「输出中」。普通非流式响应可显示接收阶段，Codex 与 Antigravity 可显示聚合阶段。
 
-实时接口要求管理员会话，仅返回路由元数据。活动与近期事件保存在进程内，请求结束并写入日志后进入近期列表，已永久删除的日志从列表中移除。重启后重新收集当前进程的活动。完整的路由决策和尝试记录从请求详情查看。
+实时接口要求管理员会话，响应限于路由元数据。活动和近期状态留在内存，结束且成功写入日志的请求进入近期列表，永久删除的记录会从列表移除。后台实时取消和尾随响应正文属于 [非目标](#14-冻结能力与非目标)。见 [实时路由测试](../internal/gateway/live_routing_test.go) 和 [管理接口测试](../internal/app/live_routing_test.go)。
 
 精简安全事件不增加用户/审计管理模块；独立查看视图的范围见第 14 节。
 
@@ -395,7 +372,7 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 - 配置项、默认值和参数校验以 [配置定义](../internal/config/config.go) 为准；用户操作说明集中在运行与开发文档，不在本节重复数值表。
 - 上游连接、响应头等待和读取空闲超时分别控制，不设置生成请求总时长上限，以适应长时间生成。请求体有可配置上限，超过时拒绝；响应流不设应用层总大小上限。
 - 管理后台与管理 API 同源，不启用 CORS。
-- SQLite 使用 WAL，所有时间以 UTC 保存，界面按浏览器时区显示。
+- SQLite 使用 WAL，时间戳以 UTC 保存，界面中的请求时间按浏览器时区显示。统计分组见 [导航模块](#122-导航模块)。
 - 数据库迁移嵌入二进制并在启动时以事务执行；schema 变化必须兼顾新建与已有数据库。
 - 配置和日志写入失败时应明确失败：无法在调用上游前建立 request / attempt 记录就拒绝，不允许产生已知的无日志调用。调用后的持久化收尾差距见第 17 节。
 - 客户端断开、上游取消和进程退出要传播 Go context 取消；当前进程退出行为见第 17 节。
@@ -494,14 +471,15 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 | 高优先级历史指令（6.1） | 公共 Chat 解码器拒绝对话中途的 system/developer，Responses 解码器会收集并前移这些指令。Antigravity 在公共解码前已有位置校验。 | [公共转换](../internal/protocol/request.go)、[Antigravity 校验](../internal/protocol/antigravity_request.go) |
 | 工具并行控制（6.1、7） | Chat / Responses 转换已区分 parallel_tool_calls 未提供、null 与显式 false/true，未提供时不补 false。Messages 的 disable_parallel_tool_use 仍未映射，转入 Messages 也不编码对应限制。完整客户端意图保留仍有缺口；同协议透传和 Antigravity 专属校验不走此编码路径。 | [请求解码与编码](../internal/protocol/request.go)、[字段存在性测试](../internal/protocol/request_test.go)、[工具选择](../internal/protocol/tools.go)、[规范模型](../internal/protocol/types.go) |
 | 特殊工具与 ID（6.1、7） | Responses 的 custom / shell / apply_patch 定义可以规范化为具名工具，但响应编码缺少原工具类型上下文，通常返回 function_call，不能保证特殊工具历史还原。跨协议转入 Responses 的请求会将超过 64 字符的调用 ID 映射为请求内短 ID，调用与结果使用同一映射，并避开已有 ID；其他调用 / 响应 ID 仍会复用，仅部分对象生成新 ID；没有独立源 / 目标 ID 日志字段。完整安全 ID 和类型往返要求仍是设计目标。 | [请求转换](../internal/protocol/request.go)、[ID 测试](../internal/protocol/request_test.go)、[工具定义](../internal/protocol/tools.go)、[响应编码](../internal/protocol/response.go)、[流式编码](../internal/protocol/stream_encode.go)、[日志 schema](../internal/store/migrations.go) |
-| 流式提交与协议校验（8、9） | 普通供应商同协议 SSE 收到上游响应头即提交；跨协议在编码器产生首批输出时提交，可能早于首语义内容，心跳也可能提前提交 HTTP 头。已提交后不再切换；普通同协议逐行透传也不提供完整 JSON/SSE 协议校验。Codex 和 Antigravity 有独立终止校验并缓冲起始元事件，不能推广为所有路径均已修复。 | [普通代理及测试](../internal/gateway/handler_test.go)、[心跳](../internal/gateway/stream_heartbeat.go)、[Codex](../internal/gateway/codex.go)、[Antigravity](../internal/gateway/antigravity.go) |
+| 流式提交与协议校验（8、9） | 即使未启用心跳，普通同协议 SSE 收到成功响应头即提交，跨协议在写出首批转换事件时提交，两者都可能早于首内容并失去切换机会。普通同协议逐行透传会把未识别到终止事件的正常 EOF 记为完成。Codex 和 Antigravity 有独立的起始缓冲及终止校验。 | [普通代理](../internal/gateway/handler.go)、[Codex](../internal/gateway/codex.go)、[Antigravity](../internal/gateway/antigravity.go) |
 | 密钥恢复与结构化错误（9） | 普通 429 可按 Retry-After 恢复；普通供应商 quota_exhausted 保持不可用，直至管理员重置或更换密钥，不读取可靠额度恢复信号；Codex 已读取结构化额度恢复时间。错误码读取兼容嵌套 error.code / error.type 及顶层 code / type，仍为精确匹配，不依赖错误文案。 | [错误分类](../internal/gateway/handler.go)、[密钥可用性](../internal/store/routing.go)、[状态重置测试](../internal/store/upstream_keys_test.go) |
-| 模型列表（4） | 模型列表查询所有启用且未归档的虚拟模型，未检查候选存在性；「有已配置候选」仍是设计要求，列表不表示即时可路由。 | [模型列表](../internal/store/routing.go) |
-| 错误追踪（10） | 正常生成处理建立 request_id 并返回响应头，但鉴权失败和请求体读取失败发生在此之前；这些响应未必有 request_id，读取失败直接返回 HTTP 错误文本。设计要求统一协议错误不代表这些入口已满足。 | [网关鉴权与读取](../internal/gateway/handler.go) |
+| 模型列表（4） | 管理接口保存模型时要求至少一个候选。列表查询本身仅检查模型启用且未归档，无法过滤来自旧库或其他写入路径的无候选模型。 | [模型列表](../internal/store/routing.go)、[管理接口校验](../internal/admin/handler.go) |
+| 错误追踪（10） | 鉴权失败、请求体读取失败和模型列表错误可能在生成 request_id 之前返回。请求体读取失败统一返回 HTTP 413 和纯文本，未区分超限与其他读取错误。 | [网关鉴权与读取](../internal/gateway/handler.go) |
 | 日志收尾与指标（11、13） | 调用前创建记录失败会阻止上游调用；部分调用后的收尾和状态更新错误未显式处理。日志不保存原始 HTTP 状态行或独立连接耗时，推理强度只有入站值。普通非流式保存原 usage JSON，普通流式及 Codex 保存合并后的标准化指标；Antigravity 保存上游 usageMetadata。原始事件仍在未清理的响应载荷中。 | [普通代理](../internal/gateway/handler.go)、[usage 提取](../internal/protocol/usage.go)、[Antigravity 收尾](../internal/gateway/antigravity.go)、[schema](../internal/store/migrations.go) |
-| 延迟口径（11.4） | request 计时在读取入站正文前启动；流式 attempt.first_content_ms 复用 request 起点，没有扣除前置路由、重试及转换时间。Codex / Antigravity 非流式聚合也按上游语义事件记首内容，早于向客户端写出 JSON。现有数值不能全部按 11.4 节的设计口径解释。 | [普通代理](../internal/gateway/handler.go)、[Codex](../internal/gateway/codex.go)、[Antigravity](../internal/gateway/antigravity.go) |
+| 延迟口径（11.4） | request 从读取入站正文前计时，流式 attempt.first_content_ms 复用 request 起点。attempt.first_byte_ms 在收到响应头后采样。Codex / Antigravity 非流式聚合以首个上游语义事件采样，早于客户端收到 JSON。 | [普通代理](../internal/gateway/handler.go)、[Codex](../internal/gateway/codex.go)、[Antigravity](../internal/gateway/antigravity.go) |
 | 客户端流式 usage（11.3） | 普通供应商上游支持时会启用 Chat include_usage，但代理与转换编码没有按客户端是否请求 usage 统一过滤。Codex 与 Antigravity 的 Chat 输出已有相应过滤，不能将普通路径的缺口推广到全部供应商。 | [普通代理](../internal/gateway/handler.go)、[Codex 过滤](../internal/gateway/codex.go)、[Antigravity 过滤](../internal/gateway/antigravity.go) |
 | 可信代理与退出（2、13） | 客户端 IP 解析只处理可信对端的 X-Forwarded-For，尚未支持 Forwarded。进程信号触发有期限的 HTTP Shutdown，但未把进程信号 context 直接作为所有请求 context 的取消源；不能声称信号到来立即取消所有上游。 | [IP 解析](../internal/httpx/httpx.go)、[程序入口](../cmd/model-confluence/main.go) |
+| 自动载荷清理（11.5） | 自动保留期清理只检查父 request 状态。父记录已结束而 attempt 仍为 `in_progress` 时，自动路径仍可能清空载荷。手动预览及清理另有 attempt 状态检查。 | [自动清理](../internal/store/retention.go)、[手动清理](../internal/store/storage.go)、[手动清理测试](../internal/store/logs_test.go) |
 
 ### 17.2 供应商验证边界
 
@@ -511,6 +489,4 @@ Chat 流式入口声明支持 usage 时，网关可对上游强制启用 `stream
 | --- | --- | --- |
 | Codex OAuth 集成 | auth.json 解析、刷新、三入口流式与非流式、function 工具多轮及失败边界已覆盖本地 mock；缺少专用账号真实调用验收，不能将 mock 视为订阅模型权限或线上兼容性证明。 | [Codex 测试](../internal/codex/auth_test.go)、[网关测试](../internal/gateway/codex_test.go) |
 | Antigravity OAuth 集成 | 仓库 mock 测试覆盖三入口流式与非流式、签名工具并行与连续调用、访问密钥隔离、重启及日志清理。历史验收记录记载：2026-10-27 在 sg1 使用单账号、gemini-3-flash、Chat Completions 入站，流式与非流式各连续两次带签名工具调用及最终回答，共六次真实请求成功；未覆盖其他账号、模型、schema 或其他入站的线上行为。 | [协议测试](../internal/protocol/antigravity_test.go)、[网关测试](../internal/gateway/antigravity_test.go)、[历史存储测试](../internal/store/antigravity_tools_test.go)、[历史验收记录](https://github.com/Sanjeever/model-confluence/commit/bfa71f6f409ff8d02497d022abff228c935ae47d) |
-| 浏览器 OAuth 登录 | 两种供应商支持自动回调、完整 URL 手动提交及同身份原位重新登录。既有授权链接、PKCE、令牌交换与落库覆盖本地 mock；单次处理、会话隔离、取消、超时和保存失败已有测试。原位替换的身份/版本及启停约束由 store 测试验证，尚未进行新入口的真实授权验收。Antigravity 曾在 sg1 通过 SSH 补送一次真实授权回调并成功保存账号，只证明该次登录与身份、项目发现成功，不代表模型权限或所有客户端兼容。不支持设备码和公网自动回调。回环监听位于进程网络命名空间，普通 Docker 端口发布不能作为自动回调通道。 | [登录会话](../internal/oauthlogin/login.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[凭据替换](../internal/store/oauth_relogin.go)、[运行说明](operations.md#浏览器登录) |
-
-供应商兼容知识应落到协议字段和测试中。以已有火山方舟接入观察为例：Messages 的 `cache_creation_input_tokens` 按该协议映射为缓存写入；Chat / Responses 不能凭其他协议的字段补数。未来供应商改变回包时，以真实样本和对应协议的 usage 定义重新评估，不按供应商名称猜测指标。保留明文 reasoning summary 的转换能力，也不对只含 encrypted_content 的回包承诺等价转换。
+| 浏览器 OAuth 登录 | 本地测试覆盖授权链接、PKCE、令牌交换、回调校验、会话隔离、取消、超时和落库，也验证凭据替换的身份、版本及启停约束。历史记录仅有 Antigravity 通过 SSH 补送真实回调并保存账号的单次验收。URL 回填、原位重新登录及其他供应商的真实授权仍待验收。 | [会话测试](../internal/oauthlogin/login_test.go)、[登录流程测试](../internal/gateway/oauth_login_test.go)、[Codex 凭据测试](../internal/store/oauth_credentials_test.go)、[Antigravity 凭据测试](../internal/store/antigravity_test.go) |

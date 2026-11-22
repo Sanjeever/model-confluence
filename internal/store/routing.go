@@ -268,7 +268,6 @@ func (s *Store) providerByID(id int64, includeSecrets bool) (Provider, error) {
 	return provider, err
 }
 
-// KeyAvailable 判断上游密钥当前是否可用于路由。
 func KeyAvailable(key UpstreamKey) bool {
 	if !key.Enabled || key.RuntimeStatus == "auth_invalid" || key.RuntimeStatus == "quota_exhausted" && (key.RecoverAt == nil || time.Now().Before(*key.RecoverAt)) {
 		return false

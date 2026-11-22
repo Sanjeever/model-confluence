@@ -140,10 +140,7 @@ func (s *Store) CreateSecurityEvent(eventType, clientIP, userAgent, endpoint, re
 	return err
 }
 
-// CloseInterruptedRequests marks requests and attempts left in progress by a
-// previous process as failed. Only one process may own the database, so any
-// in_progress row at startup was abandoned by a crash or kill; leaving it
-// stranded would keep it out of retention pruning and pollute statistics.
+// CloseInterruptedRequests 将上次进程遗留的进行中记录标为失败，使其可进入统计与清理。
 func (s *Store) CloseInterruptedRequests(now time.Time) (int, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
