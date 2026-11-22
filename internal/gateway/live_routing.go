@@ -172,8 +172,10 @@ func (h *Handler) completeAttempt(requestID string, result store.AttemptResult, 
 	defer h.activity.mu.Unlock()
 	if r := h.activity.active[requestID]; r != nil {
 		r.addEvent(liveAttemptFailed, result.CompletedAt, r.Upstream, status)
-		r.Upstream = nil
-		r.Stage = liveRouting
+		if r.Stage != liveStreaming {
+			r.Upstream = nil
+			r.Stage = liveRouting
+		}
 	}
 	return err
 }

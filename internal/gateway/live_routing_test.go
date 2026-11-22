@@ -1,6 +1,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -17,7 +18,30 @@ import (
 	"github.com/Sanjeever/model-confluence/internal/store"
 )
 
-func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
+type liveStreamRecorder struct {
+	*httptest.ResponseRecorder
+	sawMetadata bool
+	waiting     chan struct{}
+}
+
+func (w *liveStreamRecorder) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(`"role":"assistant"`)) {
+		w.sawMetadata = true
+	}
+	if w.sawMetadata && w.waiting != nil && bytes.HasPrefix(p, []byte(": keep-alive")) {
+		close(w.waiting)
+		w.waiting = nil
+	}
+	return w.ResponseRecorder.Write(p)
+}
+
+func TestLiveRoutingKeepsRequestThroughFailover(t *testing.T) {
+	t.Run("cancelled", func(t *testing.T) { testLiveRoutingFailover(t, "cancelled") })
+	t.Run("failed", func(t *testing.T) { testLiveRoutingFailover(t, "failed") })
+}
+
+func testLiveRoutingFailover(t *testing.T, terminal string) {
+	t.Helper()
 	db, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -29,13 +53,15 @@ func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
 	}))
 	t.Cleanup(primary.Close)
 
-	metadataSent := make(chan struct{})
 	sendContent := make(chan struct{})
+	stopStream := make(chan struct{})
 	backup := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
+		if terminal == "failed" {
+			w.Header().Set("Content-Length", "8192")
+		}
 		_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":null,\"tool_calls\":[]}}]}\n\n")
 		w.(http.Flusher).Flush()
-		close(metadataSent)
 		select {
 		case <-sendContent:
 			_, _ = io.WriteString(w, "data: {\"choices\":[{\"delta\":{\"content\":\"live\"}}]}\n\n")
@@ -43,7 +69,10 @@ func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
 		case <-r.Context().Done():
 			return
 		}
-		<-r.Context().Done()
+		select {
+		case <-stopStream:
+		case <-r.Context().Done():
+		}
 	}))
 	t.Cleanup(backup.Close)
 
@@ -79,7 +108,8 @@ func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
 		`{"model":"virtual","stream":true,"messages":[{"role":"user","content":"private prompt"}]}`,
 	)).WithContext(ctx)
 	req.Header.Set("Authorization", "Bearer "+key.Secret)
-	recorder := httptest.NewRecorder()
+	waitingForContent := make(chan struct{})
+	recorder := &liveStreamRecorder{ResponseRecorder: httptest.NewRecorder(), waiting: waitingForContent}
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -88,12 +118,10 @@ func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
 	t.Cleanup(func() { cancel(); <-done })
 
 	select {
-	case <-metadataSent:
+	case <-waitingForContent:
 	case <-ctx.Done():
-		t.Fatal("backup upstream did not start")
+		t.Fatal("gateway did not forward metadata followed by a heartbeat")
 	}
-	// Allow the gateway to process both the metadata event and heartbeat.
-	time.Sleep(20 * time.Millisecond)
 	snapshot := handler.LiveRouting()
 	if len(snapshot.Active) != 1 {
 		t.Fatalf("active requests: %+v", snapshot.Active)
@@ -104,7 +132,7 @@ func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
 		t.Fatalf("waiting request: %+v", waiting)
 	}
 	if !slices.ContainsFunc(waiting.Events, func(event LiveRouteEvent) bool {
-		return event.Kind == liveAttemptFailed && event.Upstream.ProviderName == "primary" &&
+		return event.Kind == liveAttemptFailed && event.Upstream != nil && event.Upstream.ProviderName == "primary" &&
 			event.ResponseStatus == http.StatusTooManyRequests
 	}) || !slices.ContainsFunc(waiting.Events, func(event LiveRouteEvent) bool { return event.Kind == liveRetrying }) {
 		t.Fatalf("missing failover events: %+v", waiting.Events)
@@ -122,13 +150,24 @@ func TestLiveRoutingKeepsRequestThroughFailoverAndCancellation(t *testing.T) {
 		case <-time.After(time.Millisecond):
 		}
 	}
-	cancel()
-	<-done
+	if terminal == "cancelled" {
+		cancel()
+	} else {
+		close(stopStream)
+	}
+	select {
+	case <-done:
+	case <-ctx.Done():
+		if terminal != "cancelled" {
+			t.Fatal("failed stream did not terminate")
+		}
+		<-done
+	}
 	snapshot = handler.LiveRouting()
 	if len(snapshot.Active) != 0 || len(snapshot.Recent) != 1 ||
-		snapshot.Recent[0].ID != waiting.ID || snapshot.Recent[0].Stage != "cancelled" ||
+		snapshot.Recent[0].ID != waiting.ID || snapshot.Recent[0].Stage != terminal ||
 		snapshot.Recent[0].Upstream.ProviderName != "backup" {
-		t.Fatalf("cancelled request: %+v", snapshot)
+		t.Fatalf("%s request: %+v", terminal, snapshot)
 	}
 	if last := waiting.Events[len(waiting.Events)-1]; last.Kind != liveAttemptStarted {
 		t.Fatalf("snapshot events changed after further writes: %+v", waiting.Events)
